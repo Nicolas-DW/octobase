@@ -124,14 +124,19 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     const canvas = canvasRef.current
     if (!canvas) return
 
+    // Utiliser les dimensions réelles du canvas plutôt que window.innerWidth
+    const rect = canvas.getBoundingClientRect()
+    const canvasWidth = rect.width
+    const canvasHeight = rect.height
+
     // Calculer le zoom pour que toutes les formes soient visibles
-    const scaleX = window.innerWidth / boundsWidth
-    const scaleY = window.innerHeight / boundsHeight
+    const scaleX = canvasWidth / boundsWidth
+    const scaleY = canvasHeight / boundsHeight
     const newZoom = Math.min(scaleX, scaleY, 2) // Limiter le zoom max à 2x
 
     // Centrer la vue sur les formes
-    const newX = window.innerWidth / 2 - centerX * newZoom
-    const newY = window.innerHeight / 2 - centerY * newZoom
+    const newX = canvasWidth / 2 - centerX * newZoom
+    const newY = canvasHeight / 2 - centerY * newZoom
 
     setViewState({
       x: newX,
@@ -403,14 +408,13 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Ajuster la taille du canvas à la fenêtre
+    // Ajuster la taille du canvas à son conteneur (en tenant compte de la sidebar)
     const resizeCanvas = () => {
-      canvas.width = window.innerWidth
-      canvas.height = window.innerHeight
+      // Utiliser les dimensions réelles du canvas plutôt que window.innerWidth
+      const rect = canvas.getBoundingClientRect()
+      canvas.width = rect.width
+      canvas.height = rect.height
     }
-
-    resizeCanvas()
-    window.addEventListener('resize', resizeCanvas)
 
     // Fonction de rendu
     const render = () => {
@@ -488,10 +492,25 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       ctx.restore()
     }
 
+    resizeCanvas()
+    
+    const resizeObserver = new ResizeObserver(() => {
+      resizeCanvas()
+      render()
+    })
+    
+    resizeObserver.observe(canvas)
+    
+    window.addEventListener('resize', () => {
+      resizeCanvas()
+      render()
+    })
+
     render()
 
     return () => {
       window.removeEventListener('resize', resizeCanvas)
+      resizeObserver.disconnect()
     }
   }, [viewState, shapes, selectedShapeId])
 

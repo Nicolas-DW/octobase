@@ -1,6 +1,14 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import Canvas, { type CanvasHandle } from './components/Canvas'
-import { saveCanvasState, loadCanvasState, type CanvasViewState } from './services/storage'
+import Sidebar from './components/Sidebar'
+import { 
+  getCurrentCanvas, 
+  updateCanvas, 
+  createCanvas,
+  migrateOldCanvasData,
+  type CanvasData
+} from './services/canvasManager'
+import type { CanvasViewState } from './services/storage'
 import './App.css'
 
 export interface Shape {
@@ -15,19 +23,21 @@ export interface Shape {
 
 function App() {
   const [shapes, setShapes] = useState<Shape[]>([])
+  const [currentCanvas, setCurrentCanvas] = useState<CanvasData | null>(null)
   const [showShapeMenu, setShowShapeMenu] = useState(false)
   const [contextMenuPos, setContextMenuPos] = useState<{ x: number; y: number; worldX: number; worldY: number } | null>(null)
+  const [sidebarVisible, setSidebarVisible] = useState(true)
   const menuRef = useRef<HTMLDivElement>(null)
   const contextMenuRef = useRef<HTMLDivElement>(null)
   const buttonRef = useRef<HTMLButtonElement>(null)
   const canvasRef = useRef<CanvasHandle>(null)
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isInitialLoadRef = useRef(true)
 
   // Fonction de sauvegarde avec debounce pour éviter trop de sauvegardes
   const saveState = useCallback((viewState?: CanvasViewState) => {
-    // Ne pas sauvegarder pendant le chargement initial
-    if (isInitialLoadRef.current) return
+    // Ne pas sauvegarder pendant le chargement initial ou si aucune toile n'est sélectionnée
+    if (isInitialLoadRef.current || !currentCanvas) return
 
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current)
@@ -35,36 +45,69 @@ function App() {
 
     saveTimeoutRef.current = setTimeout(() => {
       const currentViewState = viewState || (canvasRef.current ? canvasRef.current.getViewState() : null)
-      if (currentViewState) {
-        saveCanvasState(currentViewState, shapes)
+      if (currentViewState && currentCanvas) {
+        updateCanvas(currentCanvas.id, {
+          viewState: currentViewState,
+          shapes: shapes
+        })
       }
     }, 500) // Debounce de 500ms
-  }, [shapes])
+  }, [shapes, currentCanvas])
 
-  // Charger l'état sauvegardé au démarrage
+  // Migration des anciennes données au premier démarrage
   useEffect(() => {
-    const savedState = loadCanvasState()
-    if (savedState) {
-      // Restaurer les formes
-      if (savedState.elements.shapes && Array.isArray(savedState.elements.shapes)) {
-        setShapes(savedState.elements.shapes as Shape[])
-      }
-
-      // Restaurer la vue de la caméra avec un petit délai pour s'assurer que le canvas est monté
-      setTimeout(() => {
-        if (savedState.viewState && canvasRef.current) {
-          canvasRef.current.setViewState(savedState.viewState)
-        }
-        // Marquer le chargement initial comme terminé après restauration
-        setTimeout(() => {
-          isInitialLoadRef.current = false
-        }, 500)
-      }, 100)
+    migrateOldCanvasData()
+    
+    // Charger la toile courante
+    const canvas = getCurrentCanvas()
+    if (canvas) {
+      loadCanvas(canvas)
     } else {
-      // Pas de sauvegarde trouvée, on peut activer la sauvegarde immédiatement
-      isInitialLoadRef.current = false
+      // Aucune toile existante, créer une première toile
+      const newCanvas = createCanvas('Ma première toile')
+      loadCanvas(newCanvas)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Fonction pour charger une toile
+  const loadCanvas = useCallback((canvas: CanvasData) => {
+    isInitialLoadRef.current = true
+    setCurrentCanvas(canvas)
+    
+    // Restaurer les formes
+    if (canvas.elements.shapes && Array.isArray(canvas.elements.shapes)) {
+      setShapes(canvas.elements.shapes as Shape[])
+    } else {
+      setShapes([])
+    }
+
+    // Restaurer la vue de la caméra avec un petit délai pour s'assurer que le canvas est monté
+    setTimeout(() => {
+      if (canvas.viewState && canvasRef.current) {
+        canvasRef.current.setViewState(canvas.viewState)
+      }
+      // Marquer le chargement initial comme terminé après restauration
+      setTimeout(() => {
+        isInitialLoadRef.current = false
+      }, 500)
+    }, 100)
+  }, [])
+
+  // Callback pour sélectionner une toile depuis le Sidebar
+  const handleCanvasSelect = useCallback((canvas: CanvasData) => {
+    // Sauvegarder la toile actuelle avant de changer
+    if (currentCanvas && canvasRef.current) {
+      const viewState = canvasRef.current.getViewState()
+      updateCanvas(currentCanvas.id, {
+        viewState: viewState,
+        shapes: shapes
+      })
+    }
+    
+    // Charger la nouvelle toile
+    loadCanvas(canvas)
+  }, [currentCanvas, shapes, loadCanvas])
 
   // Sauvegarder automatiquement quand les formes changent
   useEffect(() => {
@@ -141,13 +184,28 @@ function App() {
 
   return (
     <div className="app">
-      <Canvas 
-        ref={canvasRef} 
-        shapes={shapes} 
-        onContextMenu={handleCanvasContextMenu} 
-        onShapeMove={handleShapeMove}
-        onViewStateChange={handleViewStateChange}
-      />
+      {sidebarVisible && <Sidebar onCanvasSelect={handleCanvasSelect} onToggle={() => setSidebarVisible(false)} />}
+      <div className={`app-main ${sidebarVisible ? '' : 'app-main-full'}`}>
+        <Canvas 
+          ref={canvasRef} 
+          shapes={shapes} 
+          onContextMenu={handleCanvasContextMenu} 
+          onShapeMove={handleShapeMove}
+          onViewStateChange={handleViewStateChange}
+        />
+      {!sidebarVisible && (
+        <button
+          className="sidebar-toggle-button"
+          onClick={() => setSidebarVisible(true)}
+          title="Afficher la sidebar"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+      )}
       <div className="add-button-container">
         <button
           ref={buttonRef}
@@ -247,6 +305,7 @@ function App() {
           <polyline points="9 22 9 12 15 12 15 22"></polyline>
         </svg>
       </button>
+      </div>
     </div>
   )
 }
