@@ -3,11 +3,13 @@ import type { Shape } from '../App'
 import './Canvas.css'
 
 export type BackgroundType = 'grid' | 'radar' | 'dots' | 'diagonal' | 'graph' | 'isometric'
+export type CanvasMode = 'pan' | 'select'
 
 interface CanvasProps {
   shapes: Shape[]
   onContextMenu?: (worldX: number, worldY: number, clientX: number, clientY: number) => void
   onShapeMove?: (shapeId: string, newX: number, newY: number) => void
+  onShapesMove?: (shapeIds: string[], deltaX: number, deltaY: number) => void
   onViewStateChange?: (viewState: ViewState) => void
   backgroundType?: BackgroundType
 }
@@ -26,15 +28,26 @@ export interface CanvasHandle {
   centerAtOrigin: () => void
 }
 
-const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, onShapeMove, onViewStateChange, backgroundType = 'grid' }, ref) => {
+const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, onShapeMove, onShapesMove, onViewStateChange, backgroundType = 'grid' }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [viewState, setViewState] = useState<ViewState>({ x: 0, y: 0, zoom: 1 })
   const [isPanning, setIsPanning] = useState(false)
   const [lastPanPoint, setLastPanPoint] = useState({ x: 0, y: 0 })
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null)
+  const [selectedShapeIds, setSelectedShapeIds] = useState<Set<string>>(new Set())
   const [isDraggingShape, setIsDraggingShape] = useState(false)
+  const [isDraggingMultipleShapes, setIsDraggingMultipleShapes] = useState(false)
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
+  const [initialShapesPositions, setInitialShapesPositions] = useState<Map<string, { x: number; y: number }>>(new Map())
+  const [dragStartMousePos, setDragStartMousePos] = useState<{ worldX: number; worldY: number } | null>(null)
+  const [isSelecting, setIsSelecting] = useState(false)
+  const [selectionRect, setSelectionRect] = useState<{ startX: number; startY: number; endX: number; endY: number } | null>(null)
+  const [selectionStartPoint, setSelectionStartPoint] = useState({ x: 0, y: 0 })
+  const [isSpacePressed, setIsSpacePressed] = useState(false)
+  const [canvasMode, setCanvasMode] = useState<CanvasMode>('pan')
   const lastTouchDistanceRef = useRef<number | null>(null)
+  const panStartRef = useRef({ x: 0, y: 0 })
+  const hasMovedRef = useRef(false)
 
   // Fonction pour détecter si un point est dans une forme
   const isPointInShape = (worldX: number, worldY: number, shape: Shape): boolean => {
@@ -81,6 +94,79 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       const v = (dot00 * dot12 - dot01 * dot02) * invDenom
 
       return u >= 0 && v >= 0 && u + v <= 1
+    }
+    return false
+  }
+
+  // Fonction pour détecter si une forme intersecte avec un rectangle de sélection
+  const isShapeIntersectingRect = (shape: Shape, rect: { startX: number; startY: number; endX: number; endY: number }): boolean => {
+    const rectLeft = Math.min(rect.startX, rect.endX)
+    const rectRight = Math.max(rect.startX, rect.endX)
+    const rectTop = Math.min(rect.startY, rect.endY)
+    const rectBottom = Math.max(rect.startY, rect.endY)
+
+    if (shape.type === 'square') {
+      // Vérifier l'intersection rectangle-rectangle
+      return !(
+        shape.x + shape.width < rectLeft ||
+        shape.x > rectRight ||
+        shape.y + shape.height < rectTop ||
+        shape.y > rectBottom
+      )
+    } else if (shape.type === 'circle') {
+      // Vérifier l'intersection cercle-rectangle
+      const centerX = shape.x + shape.width / 2
+      const centerY = shape.y + shape.height / 2
+      const radius = Math.min(shape.width, shape.height) / 2
+
+      // Trouver le point du rectangle le plus proche du centre du cercle
+      const closestX = Math.max(rectLeft, Math.min(centerX, rectRight))
+      const closestY = Math.max(rectTop, Math.min(centerY, rectBottom))
+
+      // Calculer la distance entre le centre et ce point
+      const distanceX = centerX - closestX
+      const distanceY = centerY - closestY
+      const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY)
+
+      // Vérifier si le cercle intersecte le rectangle
+      return distance <= radius
+    } else if (shape.type === 'triangle') {
+      // Pour le triangle, vérifier si au moins un sommet est dans le rectangle
+      // ou si le rectangle intersecte avec les bords du triangle
+      const x1 = shape.x + shape.width / 2
+      const y1 = shape.y
+      const x2 = shape.x
+      const y2 = shape.y + shape.height
+      const x3 = shape.x + shape.width
+      const y3 = shape.y + shape.height
+
+      // Vérifier si un sommet est dans le rectangle
+      const pointInRect = (px: number, py: number) => 
+        px >= rectLeft && px <= rectRight && py >= rectTop && py <= rectBottom
+
+      if (pointInRect(x1, y1) || pointInRect(x2, y2) || pointInRect(x3, y3)) {
+        return true
+      }
+
+      // Vérifier si le centre du rectangle est dans le triangle
+      const rectCenterX = (rectLeft + rectRight) / 2
+      const rectCenterY = (rectTop + rectBottom) / 2
+      if (isPointInShape(rectCenterX, rectCenterY, shape)) {
+        return true
+      }
+
+      // Vérifier l'intersection avec les bords (approximation simple)
+      const shapeLeft = Math.min(x1, x2, x3)
+      const shapeRight = Math.max(x1, x2, x3)
+      const shapeTop = Math.min(y1, y2, y3)
+      const shapeBottom = Math.max(y1, y2, y3)
+
+      return !(
+        shapeRight < rectLeft ||
+        shapeLeft > rectRight ||
+        shapeBottom < rectTop ||
+        shapeTop > rectBottom
+      )
     }
     return false
   }
@@ -209,6 +295,31 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     return () => clearTimeout(timeoutId)
   }, [viewState, onViewStateChange])
 
+  // Gestion de la touche Espace
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat) {
+        e.preventDefault()
+        setIsSpacePressed(true)
+      }
+    }
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        e.preventDefault()
+        setIsSpacePressed(false)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [])
+
   // Gestion du pan (déplacement) et zoom
   useEffect(() => {
     const canvas = canvasRef.current
@@ -272,9 +383,33 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           }
         }
 
-        if (clickedShape && onShapeMove) {
-          // Commencer le déplacement de la forme
+        // Déterminer si on est en mode sélection (bouton ou Espace)
+        const isSelectionMode = canvasMode === 'select' || isSpacePressed
+
+        // Vérifier si une forme sélectionnée est cliquée
+        const clickedSelectedShape = clickedShape && selectedShapeIds.has(clickedShape.id) ? clickedShape : null
+
+        if (clickedSelectedShape && onShapesMove && selectedShapeIds.size > 1 && !isSelectionMode) {
+          // Commencer le déplacement de plusieurs formes (seulement si pas en mode sélection)
+          setIsDraggingMultipleShapes(true)
+          setDragOffset({
+            x: worldX - clickedSelectedShape.x,
+            y: worldY - clickedSelectedShape.y,
+          })
+          // Stocker les positions initiales de toutes les formes sélectionnées
+          const initialPositions = new Map<string, { x: number; y: number }>()
+          shapes.forEach(shape => {
+            if (selectedShapeIds.has(shape.id)) {
+              initialPositions.set(shape.id, { x: shape.x, y: shape.y })
+            }
+          })
+          setInitialShapesPositions(initialPositions)
+          setLastPanPoint({ x: e.clientX, y: e.clientY })
+          hasMovedRef.current = false
+        } else if (clickedShape && onShapeMove && !isSelectionMode) {
+          // Commencer le déplacement d'une seule forme (si pas en mode sélection)
           setSelectedShapeId(clickedShape.id)
+          setSelectedShapeIds(new Set([clickedShape.id]))
           setIsDraggingShape(true)
           // Calculer l'offset entre le point de clic et la position de la forme
           setDragOffset({
@@ -282,12 +417,35 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
             y: worldY - clickedShape.y,
           })
           setLastPanPoint({ x: e.clientX, y: e.clientY })
+          hasMovedRef.current = false
         } else {
-          // Désélectionner si on clique en dehors
-          setSelectedShapeId(null)
-          // Pan normal
-          setIsPanning(true)
+          // Désélectionner si on clique en dehors (sauf si en mode sélection)
+          if (!isSelectionMode) {
+            setSelectedShapeId(null)
+            setSelectedShapeIds(new Set())
+          }
+          
+          // Initialiser pour pan ou sélection
           setLastPanPoint({ x: e.clientX, y: e.clientY })
+          panStartRef.current = { x: e.clientX, y: e.clientY }
+          hasMovedRef.current = false
+          
+          // Si en mode sélection (bouton ou Espace), commencer la sélection immédiatement
+          if (isSelectionMode) {
+            setIsSelecting(true)
+            const worldStartX = (mouseX - viewState.x) / viewState.zoom
+            const worldStartY = (mouseY - viewState.y) / viewState.zoom
+            setSelectionStartPoint({ x: worldStartX, y: worldStartY })
+            setSelectionRect({
+              startX: worldStartX,
+              startY: worldStartY,
+              endX: worldStartX,
+              endY: worldStartY,
+            })
+          } else {
+            // Sinon, préparer le pan
+            setIsPanning(true)
+          }
         }
       } else if (e.button === 1) {
         // Clic milieu - Pan
@@ -298,13 +456,27 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     }
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (isDraggingShape && selectedShapeId && onShapeMove) {
-        // Déplacer la forme
-        const rect = canvas.getBoundingClientRect()
-        const mouseX = e.clientX - rect.left
-        const mouseY = e.clientY - rect.top
+      const canvasRect = canvas.getBoundingClientRect()
+      const mouseX = e.clientX - canvasRect.left
+      const mouseY = e.clientY - canvasRect.top
 
-        // Convertir les coordonnées en coordonnées du monde
+      if (isDraggingMultipleShapes && onShapesMove && selectedShapeIds.size > 0 && initialShapesPositions.size > 0) {
+        // Déplacer plusieurs formes
+        const worldX = (mouseX - viewState.x) / viewState.zoom
+        const worldY = (mouseY - viewState.y) / viewState.zoom
+
+        const selectedShape = shapes.find(s => s.id === Array.from(selectedShapeIds)[0])
+        const initialPos = initialShapesPositions.get(Array.from(selectedShapeIds)[0])
+        if (selectedShape && initialPos) {
+          // Calculer le décalage depuis la position initiale
+          const newShapeX = worldX - dragOffset.x
+          const newShapeY = worldY - dragOffset.y
+          const deltaX = newShapeX - initialPos.x
+          const deltaY = newShapeY - initialPos.y
+          onShapesMove(Array.from(selectedShapeIds), deltaX, deltaY)
+        }
+      } else if (isDraggingShape && selectedShapeId && onShapeMove) {
+        // Déplacer une seule forme
         const worldX = (mouseX - viewState.x) / viewState.zoom
         const worldY = (mouseY - viewState.y) / viewState.zoom
 
@@ -313,22 +485,68 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
         const newY = worldY - dragOffset.y
 
         onShapeMove(selectedShapeId, newX, newY)
+      } else if (isSelecting) {
+        // Mettre à jour le rectangle de sélection
+        const worldX = (mouseX - viewState.x) / viewState.zoom
+        const worldY = (mouseY - viewState.y) / viewState.zoom
+
+        const newRect = {
+          startX: selectionStartPoint.x,
+          startY: selectionStartPoint.y,
+          endX: worldX,
+          endY: worldY,
+        }
+
+        setSelectionRect(newRect)
+
+        // Détecter les formes intersectées
+        const intersectingShapes = shapes.filter(shape => isShapeIntersectingRect(shape, newRect))
+        setSelectedShapeIds(new Set(intersectingShapes.map(s => s.id)))
       } else if (isPanning) {
-        const dx = e.clientX - lastPanPoint.x
-        const dy = e.clientY - lastPanPoint.y
+        // Pan normal
+        const panDx = e.clientX - lastPanPoint.x
+        const panDy = e.clientY - lastPanPoint.y
         setViewState((prev: ViewState) => ({
           ...prev,
-          x: prev.x + dx,
-          y: prev.y + dy,
+          x: prev.x + panDx,
+          y: prev.y + panDy,
         }))
         setLastPanPoint({ x: e.clientX, y: e.clientY })
+        hasMovedRef.current = true
       }
     }
 
     const handleMouseUp = () => {
+      if (isSelecting && selectionRect) {
+        // Finaliser la sélection
+        setIsSelecting(false)
+        const finalRect = {
+          startX: selectionStartPoint.x,
+          startY: selectionStartPoint.y,
+          endX: selectionRect.endX,
+          endY: selectionRect.endY,
+        }
+        
+        // Détecter les formes finales intersectées
+        const intersectingShapes = shapes.filter(shape => isShapeIntersectingRect(shape, finalRect))
+        const selectedIds = new Set(intersectingShapes.map(s => s.id))
+        setSelectedShapeIds(selectedIds)
+        
+        if (selectedIds.size === 1) {
+          setSelectedShapeId(Array.from(selectedIds)[0])
+        } else {
+          setSelectedShapeId(null)
+        }
+        
+        setSelectionRect(null)
+      }
+      
       setIsPanning(false)
       setIsDraggingShape(false)
+      setIsDraggingMultipleShapes(false)
       setDragOffset({ x: 0, y: 0 })
+      setInitialShapesPositions(new Map())
+      hasMovedRef.current = false
     }
 
     // Gestion du trackpad (gesture events)
@@ -442,7 +660,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       canvas.removeEventListener('touchmove', handleGestureMove)
       canvas.removeEventListener('touchend', handleGestureEnd)
     }
-  }, [viewState, isPanning, isDraggingShape, selectedShapeId, dragOffset, shapes, onContextMenu, onShapeMove])
+  }, [viewState, isPanning, isDraggingShape, isDraggingMultipleShapes, isSelecting, selectedShapeId, selectedShapeIds, selectionRect, selectionStartPoint, isSpacePressed, canvasMode, dragOffset, initialShapesPositions, shapes, onContextMenu, onShapeMove, onShapesMove])
 
 
   // Rendu du canvas
@@ -661,7 +879,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
 
       // Dessiner les formes
       shapes.forEach((shape) => {
-        const isSelected = shape.id === selectedShapeId
+        const isSelected = selectedShapeIds.has(shape.id)
         
         ctx.fillStyle = shape.color
         
@@ -700,6 +918,24 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
         }
       })
 
+      // Dessiner le rectangle de sélection
+      if (selectionRect) {
+        const rectLeft = Math.min(selectionRect.startX, selectionRect.endX)
+        const rectRight = Math.max(selectionRect.startX, selectionRect.endX)
+        const rectTop = Math.min(selectionRect.startY, selectionRect.endY)
+        const rectBottom = Math.max(selectionRect.startY, selectionRect.endY)
+        
+        ctx.strokeStyle = '#0066ff'
+        ctx.lineWidth = 1 / viewState.zoom
+        ctx.setLineDash([5 / viewState.zoom, 5 / viewState.zoom])
+        ctx.strokeRect(rectLeft, rectTop, rectRight - rectLeft, rectBottom - rectTop)
+        
+        ctx.fillStyle = 'rgba(0, 102, 255, 0.1)'
+        ctx.fillRect(rectLeft, rectTop, rectRight - rectLeft, rectBottom - rectTop)
+        
+        ctx.setLineDash([])
+      }
+
       ctx.restore()
     }
 
@@ -723,14 +959,43 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       window.removeEventListener('resize', resizeCanvas)
       resizeObserver.disconnect()
     }
-  }, [viewState, shapes, selectedShapeId, backgroundType])
+  }, [viewState, shapes, selectedShapeId, selectedShapeIds, selectionRect, backgroundType])
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="canvas"
-      style={{ cursor: isDraggingShape ? 'grabbing' : isPanning ? 'grabbing' : 'grab' }}
-    />
+    <div className="canvas-container">
+      <div className="canvas-mode-controls">
+        <button
+          className={`mode-button ${canvasMode === 'pan' ? 'active' : ''}`}
+          onClick={() => setCanvasMode('pan')}
+          title="Mode pan (maintenir Espace pour sélectionner)"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M18 11v-1a2 2 0 0 0-2-2h-1"/>
+            <path d="M9 10H2m16 4h-1a2 2 0 0 1-2 2v-1"/>
+            <path d="M9 14H2"/>
+            <path d="M10 10.5V6a2 2 0 0 1 2-2v0a2 2 0 0 1 2 2v4.5"/>
+            <path d="M14 9.5V8a2 2 0 0 1 2-2v0a2 2 0 0 1 2 2v1.5"/>
+            <path d="M18 11V9a2 2 0 0 1 4 0v2"/>
+          </svg>
+          <span>Pan</span>
+        </button>
+        <button
+          className={`mode-button ${canvasMode === 'select' ? 'active' : ''}`}
+          onClick={() => setCanvasMode('select')}
+          title="Mode sélection"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          </svg>
+          <span>Sélection</span>
+        </button>
+      </div>
+      <canvas
+        ref={canvasRef}
+        className="canvas"
+        style={{ cursor: isDraggingShape || isDraggingMultipleShapes ? 'grabbing' : isPanning ? 'grabbing' : isSelecting ? 'crosshair' : canvasMode === 'select' ? 'crosshair' : 'grab' }}
+      />
+    </div>
   )
 })
 

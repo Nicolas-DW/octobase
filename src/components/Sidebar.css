@@ -122,6 +122,48 @@
   transform: translateY(-50%) scale(0.95);
 }
 
+.sidebar-export-import {
+  padding: 12px 16px;
+  border-top: 1px solid #e0e0e0;
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.sidebar-export-button,
+.sidebar-import-button {
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: white;
+  color: #333;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.sidebar-export-button:hover:not(:disabled),
+.sidebar-import-button:hover {
+  background: #f5f5f5;
+  border-color: #0066ff;
+  color: #0066ff;
+}
+
+.sidebar-export-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sidebar-export-button svg,
+.sidebar-import-button svg {
+  flex-shrink: 0;
+}
+
 .sidebar-create-form {
   padding: 16px;
   border-bottom: 1px solid #e0e0e0;

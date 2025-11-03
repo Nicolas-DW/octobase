@@ -3,6 +3,7 @@ import Canvas, { type CanvasHandle, type BackgroundType } from './components/Can
 import Sidebar from './components/Sidebar'
 import { 
   getCurrentCanvas, 
+  getCanvasById,
   updateCanvas, 
   createCanvas,
   migrateOldCanvasData,
@@ -36,6 +37,7 @@ function App() {
   const canvasRef = useRef<CanvasHandle>(null)
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isInitialLoadRef = useRef(true)
+  const initialShapesPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map())
 
   // Fonction de sauvegarde avec debounce pour éviter trop de sauvegardes
   const saveState = useCallback((viewState?: CanvasViewState, bgType?: BackgroundType) => {
@@ -214,6 +216,8 @@ function App() {
   }
 
   const handleShapeMove = (shapeId: string, newX: number, newY: number) => {
+    // Nettoyer les positions initiales lors du déplacement d'une seule forme
+    initialShapesPositionsRef.current.clear()
     setShapes((prevShapes) =>
       prevShapes.map((shape) =>
         shape.id === shapeId ? { ...shape, x: newX, y: newY } : shape
@@ -221,6 +225,35 @@ function App() {
     )
     // La sauvegarde sera déclenchée automatiquement par le useEffect
   }
+
+  const handleShapesMove = useCallback((shapeIds: string[], deltaX: number, deltaY: number) => {
+    setShapes((prevShapes) => {
+      // Si c'est le début du drag (delta très petit ou ref vide), stocker les positions initiales
+      if ((Math.abs(deltaX) < 0.1 && Math.abs(deltaY) < 0.1) || initialShapesPositionsRef.current.size === 0) {
+        // Nettoyer la ref et stocker les nouvelles positions initiales
+        initialShapesPositionsRef.current.clear()
+        prevShapes.forEach((shape) => {
+          if (shapeIds.includes(shape.id)) {
+            initialShapesPositionsRef.current.set(shape.id, { x: shape.x, y: shape.y })
+          }
+        })
+      }
+
+      return prevShapes.map((shape) => {
+        if (shapeIds.includes(shape.id)) {
+          // Utiliser les positions initiales stockées dans la ref pour éviter l'accumulation
+          const initialPos = initialShapesPositionsRef.current.get(shape.id)
+          if (initialPos) {
+            return { ...shape, x: initialPos.x + deltaX, y: initialPos.y + deltaY }
+          }
+          // Fallback si la position initiale n'est pas trouvée
+          return { ...shape, x: shape.x + deltaX, y: shape.y + deltaY }
+        }
+        return shape
+      })
+    })
+    // La sauvegarde sera déclenchée automatiquement par le useEffect
+  }, [])
 
   const toggleShapeMenu = () => {
     setShowShapeMenu(!showShapeMenu)
@@ -230,15 +263,86 @@ function App() {
     canvasRef.current?.fitToView()
   }
 
+  // Fonction pour exporter la toile actuelle
+  const handleExportCanvas = useCallback(() => {
+    if (!currentCanvas || !canvasRef.current) return
+
+    const viewState = canvasRef.current.getViewState()
+    const exportData = {
+      name: currentCanvas.name,
+      viewState,
+      backgroundType: backgroundType,
+      shapes: shapes,
+      elements: currentCanvas.elements,
+      createdAt: currentCanvas.createdAt,
+      updatedAt: Date.now()
+    }
+
+    const json = JSON.stringify(exportData, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${currentCanvas.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }, [currentCanvas, backgroundType, shapes])
+
+  // Fonction pour importer une toile
+  const handleImportCanvas = useCallback((importedData: {
+    name?: string
+    viewState?: CanvasViewState
+    backgroundType?: BackgroundType
+    shapes?: Shape[]
+    elements?: { shapes?: Shape[] }
+    createdAt?: number
+    updatedAt?: number
+  }) => {
+    // Extraire le nom du fichier si fourni, sinon utiliser le nom dans les données
+    const canvasName = importedData.name || 'Toile importée'
+    
+    // Créer une nouvelle toile avec les données importées
+    const newCanvas = createCanvas(canvasName)
+    
+    // Mettre à jour avec les données importées
+    const importedShapes = importedData.shapes || importedData.elements?.shapes || []
+    const importedViewState = importedData.viewState || { x: 0, y: 0, zoom: 1 }
+    const importedBackgroundType = importedData.backgroundType || 'grid'
+    
+    updateCanvas(newCanvas.id, {
+      viewState: importedViewState,
+      backgroundType: importedBackgroundType,
+      shapes: importedShapes
+    })
+
+    // Récupérer la toile mise à jour depuis le storage et la charger
+    const updatedCanvas = getCanvasById(newCanvas.id)
+    if (updatedCanvas) {
+      loadCanvas(updatedCanvas)
+      handleCanvasSelect(updatedCanvas)
+    }
+  }, [loadCanvas, handleCanvasSelect])
+
   return (
     <div className="app">
-      {sidebarVisible && <Sidebar onCanvasSelect={handleCanvasSelect} onToggle={() => setSidebarVisible(false)} />}
+      {sidebarVisible && (
+        <Sidebar 
+          onCanvasSelect={handleCanvasSelect} 
+          onToggle={() => setSidebarVisible(false)}
+          onExportCanvas={handleExportCanvas}
+          onImportCanvas={handleImportCanvas}
+          canExport={currentCanvas !== null}
+        />
+      )}
       <div className={`app-main ${sidebarVisible ? '' : 'app-main-full'}`}>
         <Canvas 
           ref={canvasRef} 
           shapes={shapes} 
           onContextMenu={handleCanvasContextMenu} 
           onShapeMove={handleShapeMove}
+          onShapesMove={handleShapesMove}
           onViewStateChange={handleViewStateChange}
           backgroundType={backgroundType}
         />
