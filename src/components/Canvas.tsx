@@ -45,6 +45,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
   const [selectionStartPoint, setSelectionStartPoint] = useState({ x: 0, y: 0 })
   const [isSpacePressed, setIsSpacePressed] = useState(false)
   const [canvasMode, setCanvasMode] = useState<CanvasMode>('pan')
+  const [isHoveringShape, setIsHoveringShape] = useState(false)
+  const [hoveredShapeId, setHoveredShapeId] = useState<string | null>(null)
   const lastTouchDistanceRef = useRef<number | null>(null)
   const panStartRef = useRef({ x: 0, y: 0 })
   const hasMovedRef = useRef(false)
@@ -389,8 +391,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
         // Vérifier si une forme sélectionnée est cliquée
         const clickedSelectedShape = clickedShape && selectedShapeIds.has(clickedShape.id) ? clickedShape : null
 
-        if (clickedSelectedShape && onShapesMove && selectedShapeIds.size > 1 && !isSelectionMode) {
-          // Commencer le déplacement de plusieurs formes (seulement si pas en mode sélection)
+        // Si on clique sur une forme sélectionnée, permettre de la déplacer (même en mode sélection)
+        if (clickedSelectedShape && onShapesMove && selectedShapeIds.size > 1) {
+          // Commencer le déplacement de plusieurs formes
           setIsDraggingMultipleShapes(true)
           // Stocker la position de la souris en coordonnées monde au moment du clic
           setDragStartMousePos({ worldX, worldY })
@@ -404,8 +407,18 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           setInitialShapesPositions(initialPositions)
           setLastPanPoint({ x: e.clientX, y: e.clientY })
           hasMovedRef.current = false
+        } else if (clickedSelectedShape && onShapeMove && selectedShapeIds.size === 1) {
+          // Commencer le déplacement d'une seule forme sélectionnée
+          setIsDraggingShape(true)
+          // Calculer l'offset entre le point de clic et la position de la forme
+          setDragOffset({
+            x: worldX - clickedSelectedShape.x,
+            y: worldY - clickedSelectedShape.y,
+          })
+          setLastPanPoint({ x: e.clientX, y: e.clientY })
+          hasMovedRef.current = false
         } else if (clickedShape && onShapeMove && !isSelectionMode) {
-          // Commencer le déplacement d'une seule forme (si pas en mode sélection)
+          // Commencer le déplacement d'une seule forme non sélectionnée (seulement si pas en mode sélection)
           setSelectedShapeId(clickedShape.id)
           setSelectedShapeIds(new Set([clickedShape.id]))
           setIsDraggingShape(true)
@@ -457,6 +470,25 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       const canvasRect = canvas.getBoundingClientRect()
       const mouseX = e.clientX - canvasRect.left
       const mouseY = e.clientY - canvasRect.top
+
+      // Détecter si la souris survole une forme (seulement si pas en train de drag/pan/select)
+      if (!isDraggingShape && !isDraggingMultipleShapes && !isPanning && !isSelecting) {
+        const worldX = (mouseX - viewState.x) / viewState.zoom
+        const worldY = (mouseY - viewState.y) / viewState.zoom
+        
+        // Vérifier si on survole une forme (en ordre inverse pour prendre la forme au-dessus)
+        let hoveredShape: Shape | null = null
+        for (let i = shapes.length - 1; i >= 0; i--) {
+          if (isPointInShape(worldX, worldY, shapes[i])) {
+            hoveredShape = shapes[i]
+            break
+          }
+        }
+        
+        // Mettre à jour le survol - on est sur une forme si on survole n'importe quelle forme
+        setIsHoveringShape(hoveredShape !== null)
+        setHoveredShapeId(hoveredShape ? hoveredShape.id : null)
+      }
 
       if (isDraggingMultipleShapes && onShapesMove && selectedShapeIds.size > 0 && initialShapesPositions.size > 0 && dragStartMousePos) {
         // Déplacer plusieurs formes
@@ -636,9 +668,15 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       onContextMenu(worldX, worldY, clientX, clientY)
     }
 
+    const handleMouseLeave = () => {
+      setIsHoveringShape(false)
+      setHoveredShapeId(null)
+    }
+
     canvas.addEventListener('wheel', handleWheel, { passive: false })
     canvas.addEventListener('mousedown', handleMouseDown)
     canvas.addEventListener('contextmenu', handleContextMenu)
+    canvas.addEventListener('mouseleave', handleMouseLeave)
     window.addEventListener('mousemove', handleMouseMove)
     window.addEventListener('mouseup', handleMouseUp)
     canvas.addEventListener('touchstart', handleGestureStart, { passive: false })
@@ -649,13 +687,14 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       canvas.removeEventListener('wheel', handleWheel)
       canvas.removeEventListener('mousedown', handleMouseDown)
       canvas.removeEventListener('contextmenu', handleContextMenu)
+      canvas.removeEventListener('mouseleave', handleMouseLeave)
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
       canvas.removeEventListener('touchstart', handleGestureStart)
       canvas.removeEventListener('touchmove', handleGestureMove)
       canvas.removeEventListener('touchend', handleGestureEnd)
     }
-  }, [viewState, isPanning, isDraggingShape, isDraggingMultipleShapes, isSelecting, selectedShapeId, selectedShapeIds, selectionRect, selectionStartPoint, isSpacePressed, canvasMode, dragOffset, dragStartMousePos, initialShapesPositions, shapes, onContextMenu, onShapeMove, onShapesMove])
+  }, [viewState, isPanning, isDraggingShape, isDraggingMultipleShapes, isSelecting, selectedShapeId, selectedShapeIds, selectionRect, selectionStartPoint, isSpacePressed, canvasMode, dragOffset, dragStartMousePos, initialShapesPositions, shapes, onContextMenu, onShapeMove, onShapesMove, isPointInShape])
 
 
   // Rendu du canvas
@@ -988,7 +1027,21 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       <canvas
         ref={canvasRef}
         className="canvas"
-        style={{ cursor: isDraggingShape || isDraggingMultipleShapes ? 'grabbing' : isPanning ? 'grabbing' : isSelecting ? 'crosshair' : canvasMode === 'select' ? 'crosshair' : 'grab' }}
+        style={{ 
+          cursor: isDraggingShape || isDraggingMultipleShapes 
+            ? 'grabbing' 
+            : isPanning 
+            ? 'grabbing' 
+            : isSelecting 
+            ? 'crosshair' 
+            : (canvasMode === 'select' && hoveredShapeId && selectedShapeIds.has(hoveredShapeId))
+            ? 'move'
+            : canvasMode === 'select' 
+            ? 'crosshair' 
+            : isHoveringShape 
+            ? 'move' 
+            : 'grab' 
+        }}
       />
     </div>
   )
