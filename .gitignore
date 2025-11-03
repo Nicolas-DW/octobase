@@ -4,7 +4,9 @@ vendor/
 
 # Build outputs
 dist/
+dist-ssr/
 build/
+*.local
 *.o
 *.a
 
