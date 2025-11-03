@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react'
 import type { Shape } from '../App'
+import TextBlock from './TextBlock'
+import ShapeBlock from './ShapeBlock'
+import { screenToWorld, clientToWorld, type ViewState as CoordinateViewState } from '../utils/coordinateUtils'
 import './Canvas.css'
 
 export type BackgroundType = 'grid' | 'radar' | 'dots' | 'diagonal' | 'graph' | 'isometric'
@@ -11,6 +14,7 @@ interface CanvasProps {
   onShapeMove?: (shapeId: string, newX: number, newY: number) => void
   onShapesMove?: (shapeIds: string[], deltaX: number, deltaY: number) => void
   onViewStateChange?: (viewState: ViewState) => void
+  onTextContentChange?: (shapeId: string, content: string) => void
   backgroundType?: BackgroundType
 }
 
@@ -20,6 +24,9 @@ interface ViewState {
   zoom: number
 }
 
+// Convertir ViewState en CoordinateViewState pour les fonctions utilitaires
+const toCoordinateViewState = (vs: ViewState): CoordinateViewState => vs
+
 export interface CanvasHandle {
   fitToView: () => void
   setViewState: (viewState: { x: number; y: number; zoom: number }) => void
@@ -28,7 +35,7 @@ export interface CanvasHandle {
   centerAtOrigin: () => void
 }
 
-const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, onShapeMove, onShapesMove, onViewStateChange, backgroundType = 'grid' }, ref) => {
+const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, onShapeMove, onShapesMove, onViewStateChange, onTextContentChange, backgroundType = 'grid' }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [viewState, setViewState] = useState<ViewState>({ x: 0, y: 0, zoom: 1 })
   const [isPanning, setIsPanning] = useState(false)
@@ -47,13 +54,21 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
   const [canvasMode, setCanvasMode] = useState<CanvasMode>('pan')
   const [isHoveringShape, setIsHoveringShape] = useState(false)
   const [hoveredShapeId, setHoveredShapeId] = useState<string | null>(null)
+  const [editingTextId, setEditingTextId] = useState<string | null>(null)
   const lastTouchDistanceRef = useRef<number | null>(null)
   const panStartRef = useRef({ x: 0, y: 0 })
   const hasMovedRef = useRef(false)
 
   // Fonction pour détecter si un point est dans une forme
   const isPointInShape = (worldX: number, worldY: number, shape: Shape): boolean => {
-    if (shape.type === 'square') {
+    if (shape.type === 'text') {
+      return (
+        worldX >= shape.x &&
+        worldX <= shape.x + shape.width &&
+        worldY >= shape.y &&
+        worldY <= shape.y + shape.height
+      )
+    } else if (shape.type === 'square') {
       return (
         worldX >= shape.x &&
         worldX <= shape.x + shape.width &&
@@ -107,7 +122,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     const rectTop = Math.min(rect.startY, rect.endY)
     const rectBottom = Math.max(rect.startY, rect.endY)
 
-    if (shape.type === 'square') {
+    if (shape.type === 'text' || shape.type === 'square') {
       // Vérifier l'intersection rectangle-rectangle
       return !(
         shape.x + shape.width < rectLeft ||
@@ -203,11 +218,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     const centerScreenX = canvasWidth / 2
     const centerScreenY = canvasHeight / 2
     
-    // Convertir en coordonnées monde
-    const worldX = (centerScreenX - viewState.x) / viewState.zoom
-    const worldY = (centerScreenY - viewState.y) / viewState.zoom
-    
-    return { x: worldX, y: worldY }
+    // Convertir en coordonnées monde en utilisant la fonction utilitaire
+    return screenToWorld(centerScreenX, centerScreenY, toCoordinateViewState(viewState))
   }
 
   // Fonction pour recentrer la vue sur toutes les formes
@@ -225,7 +237,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     let maxY = -Infinity
 
     shapes.forEach((shape) => {
-      if (shape.type === 'square' || shape.type === 'triangle') {
+      if (shape.type === 'square' || shape.type === 'triangle' || shape.type === 'text') {
         minX = Math.min(minX, shape.x)
         minY = Math.min(minY, shape.y)
         maxX = Math.max(maxX, shape.x + shape.width)
@@ -330,22 +342,30 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault()
 
+      // IMPORTANT: getBoundingClientRect() donne la position réelle du canvas dans la fenêtre
+      // Cela fonctionne automatiquement avec la sidebar ouverte ou fermée, et avec n'importe quelle taille
+      // car il retourne toujours la position actuelle du canvas par rapport à la fenêtre
       const rect = canvas.getBoundingClientRect()
-      const mouseX = e.clientX - rect.left
-      const mouseY = e.clientY - rect.top
 
       // Détection du zoom (Ctrl/Cmd + wheel ou pincement trackpad)
       // Sur macOS, les événements wheel avec ctrlKey indiquent un pincement
       if (e.ctrlKey || e.metaKey) {
-        // Zoom - utiliser prev pour avoir les valeurs les plus récentes après un pan
+        // Zoom - zoomer vers le point de la souris (plus intuitif)
+        // Les coordonnées client sont relatives à la fenêtre, on doit les convertir en coordonnées canvas
+        // Cette conversion tient automatiquement compte de la position du canvas (sidebar ouverte/fermée)
+        const mouseX = e.clientX - rect.left  // Coordonnée X relative au canvas
+        const mouseY = e.clientY - rect.top   // Coordonnée Y relative au canvas
+        
         setViewState((prev: ViewState) => {
           const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1
           const newZoom = Math.max(0.1, Math.min(5, prev.zoom * zoomFactor))
 
-          // Zoom vers le point de la souris avec les valeurs à jour
+          // Calculer où se trouve le point de la souris en coordonnées monde AVANT le zoom
           const worldX = (mouseX - prev.x) / prev.zoom
           const worldY = (mouseY - prev.y) / prev.zoom
-
+          
+          // Ajuster x et y pour que le point de la souris reste à la même position monde après le zoom
+          // Cela garantit que le zoom se fait vers le point de la souris, pas vers le centre
           return {
             x: mouseX - worldX * newZoom,
             y: mouseY - worldY * newZoom,
@@ -369,12 +389,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
         e.preventDefault()
         
         const rect = canvas.getBoundingClientRect()
-        const mouseX = e.clientX - rect.left
-        const mouseY = e.clientY - rect.top
-
-        // Convertir les coordonnées du clic en coordonnées du monde
-        const worldX = (mouseX - viewState.x) / viewState.zoom
-        const worldY = (mouseY - viewState.y) / viewState.zoom
+        
+        // Convertir les coordonnées du clic en coordonnées du monde en utilisant la fonction utilitaire
+        const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, rect, toCoordinateViewState(viewState))
 
         // Vérifier si on clique sur une forme (en ordre inverse pour prendre la forme au-dessus)
         let clickedShape: Shape | null = null
@@ -444,8 +461,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           // Si en mode sélection (bouton ou Espace), commencer la sélection immédiatement
           if (isSelectionMode) {
             setIsSelecting(true)
-            const worldStartX = (mouseX - viewState.x) / viewState.zoom
-            const worldStartY = (mouseY - viewState.y) / viewState.zoom
+            const { x: worldStartX, y: worldStartY } = clientToWorld(e.clientX, e.clientY, rect, toCoordinateViewState(viewState))
             setSelectionStartPoint({ x: worldStartX, y: worldStartY })
             setSelectionRect({
               startX: worldStartX,
@@ -468,13 +484,11 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
 
     const handleMouseMove = (e: MouseEvent) => {
       const canvasRect = canvas.getBoundingClientRect()
-      const mouseX = e.clientX - canvasRect.left
-      const mouseY = e.clientY - canvasRect.top
 
       // Détecter si la souris survole une forme (seulement si pas en train de drag/pan/select)
       if (!isDraggingShape && !isDraggingMultipleShapes && !isPanning && !isSelecting) {
-        const worldX = (mouseX - viewState.x) / viewState.zoom
-        const worldY = (mouseY - viewState.y) / viewState.zoom
+        // Convertir en coordonnées monde en utilisant la fonction utilitaire
+        const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, canvasRect, toCoordinateViewState(viewState))
         
         // Vérifier si on survole une forme (en ordre inverse pour prendre la forme au-dessus)
         let hoveredShape: Shape | null = null
@@ -492,8 +506,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
 
       if (isDraggingMultipleShapes && onShapesMove && selectedShapeIds.size > 0 && initialShapesPositions.size > 0 && dragStartMousePos) {
         // Déplacer plusieurs formes
-        const worldX = (mouseX - viewState.x) / viewState.zoom
-        const worldY = (mouseY - viewState.y) / viewState.zoom
+        const canvasRect = canvas.getBoundingClientRect()
+        const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, canvasRect, toCoordinateViewState(viewState))
 
         // Calculer le delta depuis la position de départ de la souris
         const deltaX = worldX - dragStartMousePos.worldX
@@ -503,8 +517,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
         onShapesMove(Array.from(selectedShapeIds), deltaX, deltaY)
       } else if (isDraggingShape && selectedShapeId && onShapeMove) {
         // Déplacer une seule forme
-        const worldX = (mouseX - viewState.x) / viewState.zoom
-        const worldY = (mouseY - viewState.y) / viewState.zoom
+        const canvasRect = canvas.getBoundingClientRect()
+        const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, canvasRect, toCoordinateViewState(viewState))
 
         // Mettre à jour la position de la forme en soustrayant l'offset
         const newX = worldX - dragOffset.x
@@ -513,8 +527,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
         onShapeMove(selectedShapeId, newX, newY)
       } else if (isSelecting) {
         // Mettre à jour le rectangle de sélection
-        const worldX = (mouseX - viewState.x) / viewState.zoom
-        const worldY = (mouseY - viewState.y) / viewState.zoom
+        const canvasRect = canvas.getBoundingClientRect()
+        const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, canvasRect, toCoordinateViewState(viewState))
 
         const newRect = {
           startX: selectionStartPoint.x,
@@ -610,21 +624,25 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
         )
 
         if (lastTouchDistanceRef.current !== null && Math.abs(distance - lastTouchDistanceRef.current) > 5) {
-          // Zoom par pincement
+          // Zoom par pincement - zoomer vers le centre du pincement (entre les deux doigts)
           const rect = canvas.getBoundingClientRect()
-          const mouseX = centerX - rect.left
-          const mouseY = centerY - rect.top
+          // Le centre du pincement en coordonnées client (fenêtre)
+          const pinchCenterX = centerX - rect.left  // Convertir en coordonnées canvas
+          const pinchCenterY = centerY - rect.top   // Convertir en coordonnées canvas
 
           const zoomFactor = distance / lastTouchDistanceRef.current
           
           setViewState((prev: ViewState) => {
             const newZoom = Math.max(0.1, Math.min(5, prev.zoom * zoomFactor))
-            const worldX = (mouseX - prev.x) / prev.zoom
-            const worldY = (mouseY - prev.y) / prev.zoom
-
+            
+            // Calculer où se trouve le centre du pincement en coordonnées monde AVANT le zoom
+            const worldX = (pinchCenterX - prev.x) / prev.zoom
+            const worldY = (pinchCenterY - prev.y) / prev.zoom
+            
+            // Ajuster x et y pour que le centre du pincement reste à la même position monde après le zoom
             return {
-              x: mouseX - worldX * newZoom,
-              y: mouseY - worldY * newZoom,
+              x: pinchCenterX - worldX * newZoom,
+              y: pinchCenterY - worldY * newZoom,
               zoom: newZoom,
             }
           })
@@ -650,6 +668,13 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       lastTouchDistanceRef.current = null
     }
 
+    // Gestion du double-clic pour éditer les blocs de texte
+    // Cette fonction sera gérée directement par les blocs de texte via leur onDoubleClick
+    const handleDoubleClick = () => {
+      // Laisser les blocs DOM gérer leur propre double-clic
+      // Cette fonction ne fait rien car les blocs sont maintenant en DOM
+    }
+
     // Gestion du clic droit (menu contextuel)
     const handleContextMenu = (e: MouseEvent) => {
       e.preventDefault()
@@ -658,12 +683,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       const rect = canvas.getBoundingClientRect()
       const clientX = e.clientX
       const clientY = e.clientY
-      const mouseX = clientX - rect.left
-      const mouseY = clientY - rect.top
 
-      // Convertir les coordonnées du clic en coordonnées du monde
-      const worldX = (mouseX - viewState.x) / viewState.zoom
-      const worldY = (mouseY - viewState.y) / viewState.zoom
+      // Convertir les coordonnées du clic en coordonnées du monde en utilisant la fonction utilitaire
+      const { x: worldX, y: worldY } = clientToWorld(clientX, clientY, rect, toCoordinateViewState(viewState))
 
       onContextMenu(worldX, worldY, clientX, clientY)
     }
@@ -675,6 +697,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
 
     canvas.addEventListener('wheel', handleWheel, { passive: false })
     canvas.addEventListener('mousedown', handleMouseDown)
+    canvas.addEventListener('dblclick', handleDoubleClick)
     canvas.addEventListener('contextmenu', handleContextMenu)
     canvas.addEventListener('mouseleave', handleMouseLeave)
     window.addEventListener('mousemove', handleMouseMove)
@@ -686,6 +709,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     return () => {
       canvas.removeEventListener('wheel', handleWheel)
       canvas.removeEventListener('mousedown', handleMouseDown)
+      canvas.removeEventListener('dblclick', handleDoubleClick)
       canvas.removeEventListener('contextmenu', handleContextMenu)
       canvas.removeEventListener('mouseleave', handleMouseLeave)
       window.removeEventListener('mousemove', handleMouseMove)
@@ -705,9 +729,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Ajuster la taille du canvas à son conteneur (en tenant compte de la sidebar)
+    // Ajuster la taille du canvas à la taille de l'écran seulement (comme Heptabase)
     const resizeCanvas = () => {
-      // Utiliser les dimensions réelles du canvas plutôt que window.innerWidth
       const rect = canvas.getBoundingClientRect()
       canvas.width = rect.width
       canvas.height = rect.height
@@ -715,9 +738,12 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
 
     // Fonctions de rendu pour chaque type de fond
     const drawBackground = (ctx: CanvasRenderingContext2D, type: BackgroundType, zoom: number) => {
-      // Fond blanc de base
+      // Constante pour la portée de dessin
+      const drawRange = 10000
+      
+      // Fond blanc de base - couvrir une grande zone
       ctx.fillStyle = '#ffffff'
-      ctx.fillRect(-10000, -10000, 20000, 20000)
+      ctx.fillRect(-drawRange, -drawRange, drawRange * 2, drawRange * 2)
 
       const gridSize = 50
       const lineWidth = 1 / zoom
@@ -727,16 +753,16 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           // Grille normale (défaut)
           ctx.strokeStyle = '#f0f0f0'
           ctx.lineWidth = lineWidth
-          for (let x = -10000; x < 10000; x += gridSize) {
+          for (let x = -drawRange; x < drawRange; x += gridSize) {
             ctx.beginPath()
-            ctx.moveTo(x, -10000)
-            ctx.lineTo(x, 10000)
+            ctx.moveTo(x, -drawRange)
+            ctx.lineTo(x, drawRange)
             ctx.stroke()
           }
-          for (let y = -10000; y < 10000; y += gridSize) {
+          for (let y = -drawRange; y < drawRange; y += gridSize) {
             ctx.beginPath()
-            ctx.moveTo(-10000, y)
-            ctx.lineTo(10000, y)
+            ctx.moveTo(-drawRange, y)
+            ctx.lineTo(drawRange, y)
             ctx.stroke()
           }
           break
@@ -747,16 +773,16 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           ctx.lineWidth = lineWidth
           
           // Grille normale
-          for (let x = -10000; x < 10000; x += gridSize) {
+          for (let x = -drawRange; x < drawRange; x += gridSize) {
             ctx.beginPath()
-            ctx.moveTo(x, -10000)
-            ctx.lineTo(x, 10000)
+            ctx.moveTo(x, -drawRange)
+            ctx.lineTo(x, drawRange)
             ctx.stroke()
           }
-          for (let y = -10000; y < 10000; y += gridSize) {
+          for (let y = -drawRange; y < drawRange; y += gridSize) {
             ctx.beginPath()
-            ctx.moveTo(-10000, y)
-            ctx.lineTo(10000, y)
+            ctx.moveTo(-drawRange, y)
+            ctx.lineTo(drawRange, y)
             ctx.stroke()
           }
           
@@ -777,7 +803,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           // Petits traits plus épais sur les axes principaux (tous les 100px)
           ctx.strokeStyle = '#c0c0c0'
           ctx.lineWidth = 1.5 / zoom
-          for (let x = -10000; x < 10000; x += 100) {
+          for (let x = -drawRange; x < drawRange; x += 100) {
             if (x !== 0 && x % 100 === 0) {
               ctx.beginPath()
               ctx.moveTo(x, -5)
@@ -785,7 +811,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
               ctx.stroke()
             }
           }
-          for (let y = -10000; y < 10000; y += 100) {
+          for (let y = -drawRange; y < drawRange; y += 100) {
             if (y !== 0 && y % 100 === 0) {
               ctx.beginPath()
               ctx.moveTo(-5, y)
@@ -800,8 +826,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           ctx.fillStyle = '#e0e0e0'
           const dotSize = 2 / zoom
           const dotSpacing = gridSize
-          for (let x = -10000; x < 10000; x += dotSpacing) {
-            for (let y = -10000; y < 10000; y += dotSpacing) {
+          for (let x = -drawRange; x < drawRange; x += dotSpacing) {
+            for (let y = -drawRange; y < drawRange; y += dotSpacing) {
               ctx.beginPath()
               ctx.arc(x, y, dotSize, 0, Math.PI * 2)
               ctx.fill()
@@ -851,16 +877,16 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           // Lignes principales tous les 5 carreaux
           ctx.strokeStyle = '#d0d0d0'
           ctx.lineWidth = 1.5 / zoom
-          for (let x = -10000; x < 10000; x += gridSize * 5) {
+          for (let x = -drawRange; x < drawRange; x += gridSize * 5) {
             ctx.beginPath()
-            ctx.moveTo(x, -10000)
-            ctx.lineTo(x, 10000)
+            ctx.moveTo(x, -drawRange)
+            ctx.lineTo(x, drawRange)
             ctx.stroke()
           }
-          for (let y = -10000; y < 10000; y += gridSize * 5) {
+          for (let y = -drawRange; y < drawRange; y += gridSize * 5) {
             ctx.beginPath()
-            ctx.moveTo(-10000, y)
-            ctx.lineTo(10000, y)
+            ctx.moveTo(-drawRange, y)
+            ctx.lineTo(drawRange, y)
             ctx.stroke()
           }
           break
@@ -873,103 +899,64 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           // Lignes diagonales vers la droite
           for (let i = -200; i < 200; i++) {
             const startX = i * isoSize
-            const startY = -10000
+            const startY = -drawRange
             ctx.beginPath()
             ctx.moveTo(startX, startY)
-            ctx.lineTo(startX + 20000, startY + 20000)
+            ctx.lineTo(startX + drawRange * 2, startY + drawRange * 2)
             ctx.stroke()
           }
           // Lignes diagonales vers la gauche
           for (let i = -200; i < 200; i++) {
             const startX = i * isoSize
-            const startY = -10000
+            const startY = -drawRange
             ctx.beginPath()
             ctx.moveTo(startX, startY)
-            ctx.lineTo(startX - 20000, startY + 20000)
+            ctx.lineTo(startX - drawRange * 2, startY + drawRange * 2)
             ctx.stroke()
           }
           // Lignes horizontales
-          for (let y = -10000; y < 10000; y += isoSize / 2) {
+          for (let y = -drawRange; y < drawRange; y += isoSize / 2) {
             ctx.beginPath()
-            ctx.moveTo(-10000, y)
-            ctx.lineTo(10000, y)
+            ctx.moveTo(-drawRange, y)
+            ctx.lineTo(drawRange, y)
             ctx.stroke()
           }
           break
       }
     }
 
-    // Fonction de rendu
+    // Fonction de rendu - seulement le background
+    // IMPORTANT: Cette transformation doit être EXACTEMENT identique à celle du DOM
+    // pour garantir la synchronisation parfaite entre le fond et les éléments.
+    // 
+    // Le conteneur DOM utilise: transform: translate(x, y) scale(zoom) avec transform-origin: top left
+    // La matrice de transformation CSS équivalente est: [zoom 0 x; 0 zoom y; 0 0 1]
+    // 
+    // Le canvas utilise setTransform avec la même matrice pour garantir la cohérence:
+    // setTransform(zoom, 0, 0, zoom, x, y) produit exactement la même matrice
+    // 
+    // Toutes les conversions de coordonnées utilisent maintenant les fonctions utilitaires
+    // de coordinateUtils.ts pour garantir la cohérence partout dans le code.
     const render = () => {
+      // S'assurer que le canvas est redimensionné avant de dessiner
+      resizeCanvas()
+      
       ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-      // Transformer le contexte selon la vue
       ctx.save()
-      ctx.translate(viewState.x, viewState.y)
-      ctx.scale(viewState.zoom, viewState.zoom)
-
-      // Dessiner le fond selon le type sélectionné
+      
+      // Utiliser setTransform pour appliquer la transformation de manière exacte
+      // Cette matrice est identique à celle utilisée par CSS pour le conteneur DOM
+      // Cela garantit que les coordonnées du fond correspondent exactement aux éléments
+      ctx.setTransform(
+        viewState.zoom, 0,           // a, c: scale X et shear X
+        0, viewState.zoom,            // b, d: shear Y et scale Y
+        viewState.x, viewState.y      // e, f: translate X et Y
+      )
+      
+      // Dessiner le background
       drawBackground(ctx, backgroundType, viewState.zoom)
-
-      // Dessiner les formes
-      shapes.forEach((shape) => {
-        const isSelected = selectedShapeIds.has(shape.id)
-        
-        ctx.fillStyle = shape.color
-        
-        if (shape.type === 'square') {
-          ctx.fillRect(shape.x, shape.y, shape.width, shape.height)
-          if (isSelected) {
-            // Dessiner un contour pour la forme sélectionnée
-            ctx.strokeStyle = '#0066ff'
-            ctx.lineWidth = 2 / viewState.zoom
-            ctx.strokeRect(shape.x, shape.y, shape.width, shape.height)
-          }
-        } else if (shape.type === 'circle') {
-          const centerX = shape.x + shape.width / 2
-          const centerY = shape.y + shape.height / 2
-          const radius = Math.min(shape.width, shape.height) / 2
-          ctx.beginPath()
-          ctx.arc(centerX, centerY, radius, 0, Math.PI * 2)
-          ctx.fill()
-          if (isSelected) {
-            ctx.strokeStyle = '#0066ff'
-            ctx.lineWidth = 2 / viewState.zoom
-            ctx.stroke()
-          }
-        } else if (shape.type === 'triangle') {
-          ctx.beginPath()
-          ctx.moveTo(shape.x + shape.width / 2, shape.y)
-          ctx.lineTo(shape.x, shape.y + shape.height)
-          ctx.lineTo(shape.x + shape.width, shape.y + shape.height)
-          ctx.closePath()
-          ctx.fill()
-          if (isSelected) {
-            ctx.strokeStyle = '#0066ff'
-            ctx.lineWidth = 2 / viewState.zoom
-            ctx.stroke()
-          }
-        }
-      })
-
-      // Dessiner le rectangle de sélection
-      if (selectionRect) {
-        const rectLeft = Math.min(selectionRect.startX, selectionRect.endX)
-        const rectRight = Math.max(selectionRect.startX, selectionRect.endX)
-        const rectTop = Math.min(selectionRect.startY, selectionRect.endY)
-        const rectBottom = Math.max(selectionRect.startY, selectionRect.endY)
-        
-        ctx.strokeStyle = '#0066ff'
-        ctx.lineWidth = 1 / viewState.zoom
-        ctx.setLineDash([5 / viewState.zoom, 5 / viewState.zoom])
-        ctx.strokeRect(rectLeft, rectTop, rectRight - rectLeft, rectBottom - rectTop)
-        
-        ctx.fillStyle = 'rgba(0, 102, 255, 0.1)'
-        ctx.fillRect(rectLeft, rectTop, rectRight - rectLeft, rectBottom - rectTop)
-        
-        ctx.setLineDash([])
-      }
-
+      
       ctx.restore()
     }
 
@@ -1024,9 +1011,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           <span>Sélection</span>
         </button>
       </div>
+      {/* Canvas pour le background - fixe, en dehors du conteneur transformé */}
       <canvas
         ref={canvasRef}
-        className="canvas"
+        className="canvas canvas-background"
         style={{ 
           cursor: isDraggingShape || isDraggingMultipleShapes 
             ? 'grabbing' 
@@ -1043,6 +1031,185 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
             : 'grab' 
         }}
       />
+      {/* Conteneur transformé pour le zoom/pan - comme Heptabase */}
+      <div 
+        className="canvas-world-container"
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          transformOrigin: 'top left',
+          transform: `translate(${viewState.x}px, ${viewState.y}px) scale(${viewState.zoom})`,
+          pointerEvents: 'none',
+        }}
+      >
+        {/* Rendre toutes les formes géométriques */}
+        {shapes
+          .filter(shape => shape.type !== 'text')
+          .map((shape) => (
+            <ShapeBlock
+              key={shape.id}
+              shape={shape}
+              isSelected={selectedShapeIds.has(shape.id)}
+              onMouseDown={(e, shapeId) => {
+                e.stopPropagation()
+                const clickedShape = shapes.find(s => s.id === shapeId)
+                if (!clickedShape) return
+
+                const isSelectionMode = canvasMode === 'select' || isSpacePressed
+                const isSelected = selectedShapeIds.has(shapeId)
+
+                if (isSelected && onShapesMove && selectedShapeIds.size > 1) {
+                  // Déplacer plusieurs formes
+                  setIsDraggingMultipleShapes(true)
+                  const rect = canvasRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, rect, toCoordinateViewState(viewState))
+                    setDragStartMousePos({ worldX, worldY })
+                    const initialPositions = new Map<string, { x: number; y: number }>()
+                    shapes.forEach(s => {
+                      if (selectedShapeIds.has(s.id)) {
+                        initialPositions.set(s.id, { x: s.x, y: s.y })
+                      }
+                    })
+                    setInitialShapesPositions(initialPositions)
+                    setLastPanPoint({ x: e.clientX, y: e.clientY })
+                  }
+                  hasMovedRef.current = false
+                } else if (isSelected && onShapeMove && selectedShapeIds.size === 1) {
+                  // Déplacer une seule forme sélectionnée
+                  setIsDraggingShape(true)
+                  setSelectedShapeId(shapeId)
+                  const rect = canvasRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, rect, toCoordinateViewState(viewState))
+                    setDragOffset({
+                      x: worldX - clickedShape.x,
+                      y: worldY - clickedShape.y,
+                    })
+                    setLastPanPoint({ x: e.clientX, y: e.clientY })
+                  }
+                  hasMovedRef.current = false
+                } else if (!isSelectionMode && onShapeMove) {
+                  // Commencer le déplacement d'une seule forme non sélectionnée
+                  setSelectedShapeId(shapeId)
+                  setSelectedShapeIds(new Set([shapeId]))
+                  setIsDraggingShape(true)
+                  const rect = canvasRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, rect, toCoordinateViewState(viewState))
+                    setDragOffset({
+                      x: worldX - clickedShape.x,
+                      y: worldY - clickedShape.y,
+                    })
+                    setLastPanPoint({ x: e.clientX, y: e.clientY })
+                  }
+                  hasMovedRef.current = false
+                } else if (isSelectionMode) {
+                  // Mode sélection - juste sélectionner
+                  if (!isSelected) {
+                    setSelectedShapeIds(new Set([shapeId]))
+                    setSelectedShapeId(shapeId)
+                  }
+                }
+              }}
+            />
+          ))}
+        {/* Rendre tous les blocs de texte */}
+        {shapes
+          .filter(shape => shape.type === 'text')
+          .map((shape) => (
+            <TextBlock
+              key={shape.id}
+              shape={shape}
+              isSelected={selectedShapeIds.has(shape.id)}
+              isEditing={editingTextId === shape.id}
+              onDoubleClick={() => setEditingTextId(shape.id)}
+              onContentChange={(content) => {
+                if (onTextContentChange) {
+                  onTextContentChange(shape.id, content)
+                }
+              }}
+              onBlur={() => setEditingTextId(null)}
+              onMouseDown={(e, shapeId) => {
+                if (editingTextId === shapeId) return // Ne pas gérer le drag en mode édition
+                e.stopPropagation()
+                const clickedShape = shapes.find(s => s.id === shapeId)
+                if (!clickedShape) return
+
+                const isSelectionMode = canvasMode === 'select' || isSpacePressed
+                const isSelected = selectedShapeIds.has(shapeId)
+
+                if (isSelected && onShapesMove && selectedShapeIds.size > 1) {
+                  setIsDraggingMultipleShapes(true)
+                  const rect = canvasRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, rect, toCoordinateViewState(viewState))
+                    setDragStartMousePos({ worldX, worldY })
+                    const initialPositions = new Map<string, { x: number; y: number }>()
+                    shapes.forEach(s => {
+                      if (selectedShapeIds.has(s.id)) {
+                        initialPositions.set(s.id, { x: s.x, y: s.y })
+                      }
+                    })
+                    setInitialShapesPositions(initialPositions)
+                    setLastPanPoint({ x: e.clientX, y: e.clientY })
+                  }
+                  hasMovedRef.current = false
+                } else if (isSelected && onShapeMove && selectedShapeIds.size === 1) {
+                  setIsDraggingShape(true)
+                  setSelectedShapeId(shapeId)
+                  const rect = canvasRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, rect, toCoordinateViewState(viewState))
+                    setDragOffset({
+                      x: worldX - clickedShape.x,
+                      y: worldY - clickedShape.y,
+                    })
+                    setLastPanPoint({ x: e.clientX, y: e.clientY })
+                  }
+                  hasMovedRef.current = false
+                } else if (!isSelectionMode && onShapeMove) {
+                  setSelectedShapeId(shapeId)
+                  setSelectedShapeIds(new Set([shapeId]))
+                  setIsDraggingShape(true)
+                  const rect = canvasRef.current?.getBoundingClientRect()
+                  if (rect) {
+                    const { x: worldX, y: worldY } = clientToWorld(e.clientX, e.clientY, rect, toCoordinateViewState(viewState))
+                    setDragOffset({
+                      x: worldX - clickedShape.x,
+                      y: worldY - clickedShape.y,
+                    })
+                    setLastPanPoint({ x: e.clientX, y: e.clientY })
+                  }
+                  hasMovedRef.current = false
+                } else if (isSelectionMode) {
+                  if (!isSelected) {
+                    setSelectedShapeIds(new Set([shapeId]))
+                    setSelectedShapeId(shapeId)
+                  }
+                }
+              }}
+            />
+          ))}
+      </div>
+      {/* Rectangle de sélection */}
+      {selectionRect && (
+        <div 
+          className="selection-rect"
+          style={{
+            position: 'fixed',
+            left: `${viewState.x + Math.min(selectionRect.startX, selectionRect.endX) * viewState.zoom}px`,
+            top: `${viewState.y + Math.min(selectionRect.startY, selectionRect.endY) * viewState.zoom}px`,
+            width: `${Math.abs(selectionRect.endX - selectionRect.startX) * viewState.zoom}px`,
+            height: `${Math.abs(selectionRect.endY - selectionRect.startY) * viewState.zoom}px`,
+            border: '1px dashed #0066ff',
+            backgroundColor: 'rgba(0, 102, 255, 0.1)',
+            pointerEvents: 'none',
+            zIndex: 1000,
+          }}
+        />
+      )}
     </div>
   )
 })

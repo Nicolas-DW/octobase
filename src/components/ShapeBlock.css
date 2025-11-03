@@ -1,0 +1,25 @@
+.shape-block {
+  user-select: none;
+  pointer-events: auto;
+  cursor: move;
+}
+
+.shape-block-square {
+  border-radius: 0;
+}
+
+.shape-block-circle {
+  border-radius: 50%;
+}
+
+.shape-block-triangle {
+  border-radius: 0;
+  background: transparent !important;
+  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+}
+
+.shape-block-selected {
+  outline: 2px solid #0066ff;
+  outline-offset: 2px;
+}
+

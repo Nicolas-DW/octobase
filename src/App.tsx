@@ -14,12 +14,13 @@ import './App.css'
 
 export interface Shape {
   id: string
-  type: 'square' | 'circle' | 'triangle'
+  type: 'square' | 'circle' | 'triangle' | 'text'
   x: number
   y: number
   width: number
   height: number
   color: string
+  content?: string // Pour les blocs de texte (markdown)
 }
 
 function App() {
@@ -179,7 +180,7 @@ function App() {
     }
   }, [showShapeMenu, contextMenuPos, showBackgroundMenu])
 
-  const addShape = (type: 'square' | 'circle' | 'triangle', x?: number, y?: number) => {
+  const addShape = (type: 'square' | 'circle' | 'triangle' | 'text', x?: number, y?: number) => {
     // Si aucune position spécifiée, placer l'objet au centre visible (qui correspond à 0,0)
     let shapeX = x
     let shapeY = y
@@ -202,9 +203,10 @@ function App() {
       type,
       x: shapeX,
       y: shapeY,
-      width: 100,
-      height: 100,
-      color: `hsl(${Math.random() * 360}, 70%, 50%)`,
+      width: type === 'text' ? 300 : 100,
+      height: type === 'text' ? 150 : 100,
+      color: type === 'text' ? '#ffffff' : `hsl(${Math.random() * 360}, 70%, 50%)`,
+      content: type === 'text' ? '# Titre\n\nÉcrivez votre texte ici avec du **markdown**.' : undefined,
     }
     setShapes([...shapes, newShape])
     setShowShapeMenu(false)
@@ -225,6 +227,14 @@ function App() {
     )
     // La sauvegarde sera déclenchée automatiquement par le useEffect
   }
+
+  const handleTextContentChange = useCallback((shapeId: string, content: string) => {
+    setShapes((prevShapes) =>
+      prevShapes.map((shape) =>
+        shape.id === shapeId ? { ...shape, content } : shape
+      )
+    )
+  }, [])
 
   const handleShapesMove = useCallback((shapeIds: string[], deltaX: number, deltaY: number) => {
     setShapes((prevShapes) => {
@@ -344,6 +354,7 @@ function App() {
           onShapeMove={handleShapeMove}
           onShapesMove={handleShapesMove}
           onViewStateChange={handleViewStateChange}
+          onTextContentChange={handleTextContentChange}
           backgroundType={backgroundType}
         />
       {!sidebarVisible && (
@@ -401,6 +412,16 @@ function App() {
               </svg>
               <span>Triangle</span>
             </button>
+            <button
+              className="shape-menu-item"
+              onClick={() => addShape('text')}
+              title="Bloc de texte"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M4 7h16M4 12h16M4 17h12" />
+              </svg>
+              <span>Bloc de texte</span>
+            </button>
           </div>
         )}
       </div>
@@ -442,6 +463,16 @@ function App() {
               <path d="M10 2 L18 16 L2 16 Z" />
             </svg>
             <span>Triangle</span>
+          </button>
+          <button
+            className="shape-menu-item"
+            onClick={() => addShape('text', contextMenuPos.worldX - 150, contextMenuPos.worldY - 75)}
+            title="Bloc de texte"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M4 7h16M4 12h16M4 17h12" />
+            </svg>
+            <span>Bloc de texte</span>
           </button>
         </div>
       )}
