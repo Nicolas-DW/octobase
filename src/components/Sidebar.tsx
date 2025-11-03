@@ -14,9 +14,12 @@ import './Sidebar.css'
 interface SidebarProps {
   onCanvasSelect: (canvas: CanvasData) => void
   onToggle?: () => void
+  onExportCanvas?: () => void
+  onImportCanvas?: (importedData: any) => void
+  canExport?: boolean
 }
 
-export default function Sidebar({ onCanvasSelect, onToggle }: SidebarProps) {
+export default function Sidebar({ onCanvasSelect, onToggle, onExportCanvas, onImportCanvas, canExport = false }: SidebarProps) {
   const [canvases, setCanvases] = useState<CanvasData[]>([])
   const [sortBy, setSortBy] = useState<SortOption>('createdAt')
   const [isCreating, setIsCreating] = useState(false)
@@ -261,6 +264,63 @@ export default function Sidebar({ onCanvasSelect, onToggle }: SidebarProps) {
             </div>
           ))
         )}
+      </div>
+
+      <div className="sidebar-export-import">
+        <button
+          className="sidebar-export-button"
+          onClick={onExportCanvas}
+          disabled={!canExport}
+          title="Exporter la toile actuelle en JSON"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>Exporter</span>
+        </button>
+        <button
+          className="sidebar-import-button"
+          onClick={() => {
+            const input = document.createElement('input')
+            input.type = 'file'
+            input.accept = '.json'
+            input.onchange = (e) => {
+              const file = (e.target as HTMLInputElement).files?.[0]
+              if (!file || !onImportCanvas) return
+              
+              const reader = new FileReader()
+              reader.onload = (event) => {
+                try {
+                  const json = event.target?.result as string
+                  const importedData = JSON.parse(json)
+                  
+                  // Extraire le nom du fichier (sans extension)
+                  const fileName = file.name.replace(/\.json$/i, '')
+                  if (!importedData.name) {
+                    importedData.name = fileName
+                  }
+                  
+                  onImportCanvas(importedData)
+                } catch (error) {
+                  alert('Erreur lors de l\'import : le fichier JSON n\'est pas valide')
+                  console.error('Erreur lors de l\'import:', error)
+                }
+              }
+              reader.readAsText(file)
+            }
+            input.click()
+          }}
+          title="Importer une toile depuis un fichier JSON"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+          <span>Importer</span>
+        </button>
       </div>
     </div>
   )

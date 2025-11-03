@@ -1,7 +1,65 @@
+.canvas-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
 .canvas {
   display: block;
   width: 100%;
   height: 100%;
   background: #fafafa;
+}
+
+.canvas-mode-controls {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  z-index: 10;
+  background: white;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border: 1px solid #e0e0e0;
+}
+
+.mode-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  color: #666;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.mode-button:hover {
+  background: #f5f5f5;
+  color: #333;
+}
+
+.mode-button.active {
+  background: #0066ff;
+  color: white;
+}
+
+.mode-button.active:hover {
+  background: #0052cc;
+}
+
+.mode-button svg {
+  flex-shrink: 0;
+}
+
+.mode-button span {
+  white-space: nowrap;
 }
 
