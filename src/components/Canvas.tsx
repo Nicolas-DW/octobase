@@ -392,10 +392,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
         if (clickedSelectedShape && onShapesMove && selectedShapeIds.size > 1 && !isSelectionMode) {
           // Commencer le déplacement de plusieurs formes (seulement si pas en mode sélection)
           setIsDraggingMultipleShapes(true)
-          setDragOffset({
-            x: worldX - clickedSelectedShape.x,
-            y: worldY - clickedSelectedShape.y,
-          })
+          // Stocker la position de la souris en coordonnées monde au moment du clic
+          setDragStartMousePos({ worldX, worldY })
           // Stocker les positions initiales de toutes les formes sélectionnées
           const initialPositions = new Map<string, { x: number; y: number }>()
           shapes.forEach(shape => {
@@ -460,21 +458,17 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       const mouseX = e.clientX - canvasRect.left
       const mouseY = e.clientY - canvasRect.top
 
-      if (isDraggingMultipleShapes && onShapesMove && selectedShapeIds.size > 0 && initialShapesPositions.size > 0) {
+      if (isDraggingMultipleShapes && onShapesMove && selectedShapeIds.size > 0 && initialShapesPositions.size > 0 && dragStartMousePos) {
         // Déplacer plusieurs formes
         const worldX = (mouseX - viewState.x) / viewState.zoom
         const worldY = (mouseY - viewState.y) / viewState.zoom
 
-        const selectedShape = shapes.find(s => s.id === Array.from(selectedShapeIds)[0])
-        const initialPos = initialShapesPositions.get(Array.from(selectedShapeIds)[0])
-        if (selectedShape && initialPos) {
-          // Calculer le décalage depuis la position initiale
-          const newShapeX = worldX - dragOffset.x
-          const newShapeY = worldY - dragOffset.y
-          const deltaX = newShapeX - initialPos.x
-          const deltaY = newShapeY - initialPos.y
-          onShapesMove(Array.from(selectedShapeIds), deltaX, deltaY)
-        }
+        // Calculer le delta depuis la position de départ de la souris
+        const deltaX = worldX - dragStartMousePos.worldX
+        const deltaY = worldY - dragStartMousePos.worldY
+        
+        // Appliquer ce delta à toutes les formes sélectionnées
+        onShapesMove(Array.from(selectedShapeIds), deltaX, deltaY)
       } else if (isDraggingShape && selectedShapeId && onShapeMove) {
         // Déplacer une seule forme
         const worldX = (mouseX - viewState.x) / viewState.zoom
@@ -546,6 +540,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       setIsDraggingMultipleShapes(false)
       setDragOffset({ x: 0, y: 0 })
       setInitialShapesPositions(new Map())
+      setDragStartMousePos(null)
       hasMovedRef.current = false
     }
 
@@ -660,7 +655,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       canvas.removeEventListener('touchmove', handleGestureMove)
       canvas.removeEventListener('touchend', handleGestureEnd)
     }
-  }, [viewState, isPanning, isDraggingShape, isDraggingMultipleShapes, isSelecting, selectedShapeId, selectedShapeIds, selectionRect, selectionStartPoint, isSpacePressed, canvasMode, dragOffset, initialShapesPositions, shapes, onContextMenu, onShapeMove, onShapesMove])
+  }, [viewState, isPanning, isDraggingShape, isDraggingMultipleShapes, isSelecting, selectedShapeId, selectedShapeIds, selectionRect, selectionStartPoint, isSpacePressed, canvasMode, dragOffset, dragStartMousePos, initialShapesPositions, shapes, onContextMenu, onShapeMove, onShapesMove])
 
 
   // Rendu du canvas
