@@ -113,6 +113,17 @@ export default function Sidebar({ onCanvasSelect, onToggle }: SidebarProps) {
 
   return (
     <div className="sidebar">
+      {onToggle && (
+        <button
+          className="sidebar-tab"
+          onClick={onToggle}
+          title="Masquer la sidebar"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+        </button>
+      )}
       <div className="sidebar-header">
         <h2 className="sidebar-title">Toiles</h2>
         <div className="sidebar-header-actions">
@@ -126,18 +137,6 @@ export default function Sidebar({ onCanvasSelect, onToggle }: SidebarProps) {
               <line x1="5" y1="12" x2="19" y2="12"></line>
             </svg>
           </button>
-          {onToggle && (
-            <button
-              className="sidebar-toggle-button"
-              onClick={onToggle}
-              title="Masquer la sidebar"
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
-          )}
         </div>
       </div>
 

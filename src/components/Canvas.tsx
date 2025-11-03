@@ -2,11 +2,14 @@ import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 're
 import type { Shape } from '../App'
 import './Canvas.css'
 
+export type BackgroundType = 'grid' | 'radar' | 'dots' | 'diagonal' | 'graph' | 'isometric'
+
 interface CanvasProps {
   shapes: Shape[]
   onContextMenu?: (worldX: number, worldY: number, clientX: number, clientY: number) => void
   onShapeMove?: (shapeId: string, newX: number, newY: number) => void
   onViewStateChange?: (viewState: ViewState) => void
+  backgroundType?: BackgroundType
 }
 
 interface ViewState {
@@ -19,9 +22,11 @@ export interface CanvasHandle {
   fitToView: () => void
   setViewState: (viewState: { x: number; y: number; zoom: number }) => void
   getViewState: () => { x: number; y: number; zoom: number }
+  getCenterWorldCoords: () => { x: number; y: number } | null
+  centerAtOrigin: () => void
 }
 
-const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, onShapeMove, onViewStateChange }, ref) => {
+const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, onShapeMove, onViewStateChange, backgroundType = 'grid' }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [viewState, setViewState] = useState<ViewState>({ x: 0, y: 0, zoom: 1 })
   const [isPanning, setIsPanning] = useState(false)
@@ -80,11 +85,48 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     return false
   }
 
+  // Fonction pour centrer la vue sur l'origine (0,0)
+  const centerAtOrigin = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    
+    const rect = canvas.getBoundingClientRect()
+    const canvasWidth = rect.width
+    const canvasHeight = rect.height
+    
+    // Centrer le point (0,0) au centre du canvas
+    setViewState({
+      x: canvasWidth / 2,
+      y: canvasHeight / 2,
+      zoom: 1
+    })
+  }
+
+  // Fonction pour obtenir les coordonnées monde du centre visible
+  const getCenterWorldCoords = (): { x: number; y: number } | null => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    
+    const rect = canvas.getBoundingClientRect()
+    const canvasWidth = rect.width
+    const canvasHeight = rect.height
+    
+    // Le centre du canvas en coordonnées écran
+    const centerScreenX = canvasWidth / 2
+    const centerScreenY = canvasHeight / 2
+    
+    // Convertir en coordonnées monde
+    const worldX = (centerScreenX - viewState.x) / viewState.zoom
+    const worldY = (centerScreenY - viewState.y) / viewState.zoom
+    
+    return { x: worldX, y: worldY }
+  }
+
   // Fonction pour recentrer la vue sur toutes les formes
   const fitToView = () => {
     if (shapes.length === 0) {
-      // Si aucune forme, recentrer à l'origine
-      setViewState({ x: 0, y: 0, zoom: 1 })
+      // Si aucune forme, recentrer à l'origine (0,0) au centre
+      centerAtOrigin()
       return
     }
 
@@ -152,6 +194,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       setViewState(newViewState)
     },
     getViewState: () => viewState,
+    getCenterWorldCoords,
+    centerAtOrigin,
   }))
 
   // Notifier les changements de vue avec debounce
@@ -400,6 +444,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     }
   }, [viewState, isPanning, isDraggingShape, selectedShapeId, dragOffset, shapes, onContextMenu, onShapeMove])
 
+
   // Rendu du canvas
   useEffect(() => {
     const canvas = canvasRef.current
@@ -416,6 +461,192 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       canvas.height = rect.height
     }
 
+    // Fonctions de rendu pour chaque type de fond
+    const drawBackground = (ctx: CanvasRenderingContext2D, type: BackgroundType, zoom: number) => {
+      // Fond blanc de base
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(-10000, -10000, 20000, 20000)
+
+      const gridSize = 50
+      const lineWidth = 1 / zoom
+
+      switch (type) {
+        case 'grid':
+          // Grille normale (défaut)
+          ctx.strokeStyle = '#f0f0f0'
+          ctx.lineWidth = lineWidth
+          for (let x = -10000; x < 10000; x += gridSize) {
+            ctx.beginPath()
+            ctx.moveTo(x, -10000)
+            ctx.lineTo(x, 10000)
+            ctx.stroke()
+          }
+          for (let y = -10000; y < 10000; y += gridSize) {
+            ctx.beginPath()
+            ctx.moveTo(-10000, y)
+            ctx.lineTo(10000, y)
+            ctx.stroke()
+          }
+          break
+
+        case 'radar':
+          // Grille radar avec centre marqué
+          ctx.strokeStyle = '#f0f0f0'
+          ctx.lineWidth = lineWidth
+          
+          // Grille normale
+          for (let x = -10000; x < 10000; x += gridSize) {
+            ctx.beginPath()
+            ctx.moveTo(x, -10000)
+            ctx.lineTo(x, 10000)
+            ctx.stroke()
+          }
+          for (let y = -10000; y < 10000; y += gridSize) {
+            ctx.beginPath()
+            ctx.moveTo(-10000, y)
+            ctx.lineTo(10000, y)
+            ctx.stroke()
+          }
+          
+          // Ligne verticale centrale (plus épaisse)
+          ctx.strokeStyle = '#d0d0d0'
+          ctx.lineWidth = 2 / zoom
+          ctx.beginPath()
+          ctx.moveTo(0, -10000)
+          ctx.lineTo(0, 10000)
+          ctx.stroke()
+          
+          // Ligne horizontale centrale (plus épaisse)
+          ctx.beginPath()
+          ctx.moveTo(-10000, 0)
+          ctx.lineTo(10000, 0)
+          ctx.stroke()
+          
+          // Petits traits plus épais sur les axes principaux (tous les 100px)
+          ctx.strokeStyle = '#c0c0c0'
+          ctx.lineWidth = 1.5 / zoom
+          for (let x = -10000; x < 10000; x += 100) {
+            if (x !== 0 && x % 100 === 0) {
+              ctx.beginPath()
+              ctx.moveTo(x, -5)
+              ctx.lineTo(x, 5)
+              ctx.stroke()
+            }
+          }
+          for (let y = -10000; y < 10000; y += 100) {
+            if (y !== 0 && y % 100 === 0) {
+              ctx.beginPath()
+              ctx.moveTo(-5, y)
+              ctx.lineTo(5, y)
+              ctx.stroke()
+            }
+          }
+          break
+
+        case 'dots':
+          // Fond avec points
+          ctx.fillStyle = '#e0e0e0'
+          const dotSize = 2 / zoom
+          const dotSpacing = gridSize
+          for (let x = -10000; x < 10000; x += dotSpacing) {
+            for (let y = -10000; y < 10000; y += dotSpacing) {
+              ctx.beginPath()
+              ctx.arc(x, y, dotSize, 0, Math.PI * 2)
+              ctx.fill()
+            }
+          }
+          break
+
+        case 'diagonal':
+          // Lignes diagonales
+          ctx.strokeStyle = '#f0f0f0'
+          ctx.lineWidth = lineWidth
+          const diagonalSpacing = gridSize * 2
+          // Lignes diagonales montantes
+          for (let offset = -20000; offset < 20000; offset += diagonalSpacing) {
+            ctx.beginPath()
+            ctx.moveTo(-10000 + offset, -10000)
+            ctx.lineTo(10000, -10000 + offset + 20000)
+            ctx.stroke()
+          }
+          // Lignes diagonales descendantes
+          for (let offset = -20000; offset < 20000; offset += diagonalSpacing) {
+            ctx.beginPath()
+            ctx.moveTo(-10000, -10000 + offset)
+            ctx.lineTo(10000, 10000 + offset)
+            ctx.stroke()
+          }
+          break
+
+        case 'graph':
+          // Papier quadrillé (style graphique)
+          ctx.strokeStyle = '#e8e8e8'
+          ctx.lineWidth = lineWidth
+          // Lignes verticales fines
+          for (let x = -10000; x < 10000; x += gridSize) {
+            ctx.beginPath()
+            ctx.moveTo(x, -10000)
+            ctx.lineTo(x, 10000)
+            ctx.stroke()
+          }
+          // Lignes horizontales fines
+          for (let y = -10000; y < 10000; y += gridSize) {
+            ctx.beginPath()
+            ctx.moveTo(-10000, y)
+            ctx.lineTo(10000, y)
+            ctx.stroke()
+          }
+          // Lignes principales tous les 5 carreaux
+          ctx.strokeStyle = '#d0d0d0'
+          ctx.lineWidth = 1.5 / zoom
+          for (let x = -10000; x < 10000; x += gridSize * 5) {
+            ctx.beginPath()
+            ctx.moveTo(x, -10000)
+            ctx.lineTo(x, 10000)
+            ctx.stroke()
+          }
+          for (let y = -10000; y < 10000; y += gridSize * 5) {
+            ctx.beginPath()
+            ctx.moveTo(-10000, y)
+            ctx.lineTo(10000, y)
+            ctx.stroke()
+          }
+          break
+
+        case 'isometric':
+          // Grille isométrique
+          ctx.strokeStyle = '#e8e8e8'
+          ctx.lineWidth = lineWidth
+          const isoSize = gridSize * 2
+          // Lignes diagonales vers la droite
+          for (let i = -200; i < 200; i++) {
+            const startX = i * isoSize
+            const startY = -10000
+            ctx.beginPath()
+            ctx.moveTo(startX, startY)
+            ctx.lineTo(startX + 20000, startY + 20000)
+            ctx.stroke()
+          }
+          // Lignes diagonales vers la gauche
+          for (let i = -200; i < 200; i++) {
+            const startX = i * isoSize
+            const startY = -10000
+            ctx.beginPath()
+            ctx.moveTo(startX, startY)
+            ctx.lineTo(startX - 20000, startY + 20000)
+            ctx.stroke()
+          }
+          // Lignes horizontales
+          for (let y = -10000; y < 10000; y += isoSize / 2) {
+            ctx.beginPath()
+            ctx.moveTo(-10000, y)
+            ctx.lineTo(10000, y)
+            ctx.stroke()
+          }
+          break
+      }
+    }
+
     // Fonction de rendu
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
@@ -425,28 +656,8 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       ctx.translate(viewState.x, viewState.y)
       ctx.scale(viewState.zoom, viewState.zoom)
 
-      // Dessiner un fond avec grille subtile pour visualiser le pan
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(-10000, -10000, 20000, 20000)
-
-      // Grille subtile
-      ctx.strokeStyle = '#f0f0f0'
-      ctx.lineWidth = 1 / viewState.zoom
-      const gridSize = 50
-
-      for (let x = -10000; x < 10000; x += gridSize) {
-        ctx.beginPath()
-        ctx.moveTo(x, -10000)
-        ctx.lineTo(x, 10000)
-        ctx.stroke()
-      }
-
-      for (let y = -10000; y < 10000; y += gridSize) {
-        ctx.beginPath()
-        ctx.moveTo(-10000, y)
-        ctx.lineTo(10000, y)
-        ctx.stroke()
-      }
+      // Dessiner le fond selon le type sélectionné
+      drawBackground(ctx, backgroundType, viewState.zoom)
 
       // Dessiner les formes
       shapes.forEach((shape) => {
@@ -512,7 +723,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       window.removeEventListener('resize', resizeCanvas)
       resizeObserver.disconnect()
     }
-  }, [viewState, shapes, selectedShapeId])
+  }, [viewState, shapes, selectedShapeId, backgroundType])
 
   return (
     <canvas

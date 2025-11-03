@@ -4,6 +4,7 @@
  */
 
 import { loadCanvasState, type CanvasViewState } from './storage'
+import type { BackgroundType } from '../components/Canvas'
 
 export interface CanvasData {
   id: string
@@ -11,6 +12,7 @@ export interface CanvasData {
   createdAt: number
   updatedAt: number
   viewState: CanvasViewState
+  backgroundType?: BackgroundType
   elements: {
     shapes?: any[]
     [key: string]: any
@@ -108,6 +110,7 @@ export function createCanvas(name?: string): CanvasData {
     createdAt: now,
     updatedAt: now,
     viewState: { x: 0, y: 0, zoom: 1 },
+    backgroundType: 'grid', // Défaut: grille normale
     elements: {
       shapes: []
     }
@@ -128,6 +131,7 @@ export function updateCanvas(
   updates: {
     name?: string
     viewState?: CanvasViewState
+    backgroundType?: BackgroundType
     shapes?: any[]
     additionalElements?: { [key: string]: any }
   }
@@ -145,6 +149,7 @@ export function updateCanvas(
     ...canvas,
     ...(updates.name && { name: updates.name }),
     ...(updates.viewState && { viewState: updates.viewState }),
+    ...(updates.backgroundType !== undefined && { backgroundType: updates.backgroundType }),
     updatedAt: Date.now(),
     elements: {
       ...canvas.elements,
@@ -224,6 +229,7 @@ export function migrateOldCanvasData(): CanvasData | null {
       createdAt: oldData.metadata?.lastSaved || now,
       updatedAt: oldData.metadata?.lastSaved || now,
       viewState: oldData.viewState,
+      backgroundType: 'grid', // Valeur par défaut pour les toiles migrées
       elements: oldData.elements
     }
     
