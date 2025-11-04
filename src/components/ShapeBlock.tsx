@@ -15,7 +15,7 @@ export default function ShapeBlock({
 }: ShapeBlockProps) {
   const blockRef = useRef<HTMLDivElement>(null)
 
-  if (shape.type === 'text') {
+  if (shape.kind === 'text') {
     return null // Les blocs de texte sont gérés par TextBlock
   }
 
@@ -29,7 +29,7 @@ export default function ShapeBlock({
   return (
     <div
       ref={blockRef}
-      className={`shape-block shape-block-${shape.type} ${isSelected ? 'shape-block-selected' : ''}`}
+      className={`shape-block shape-block-${shape.appearance} ${isSelected ? 'shape-block-selected' : ''}`}
       style={{
         position: 'absolute',
         left: 0,
@@ -41,7 +41,7 @@ export default function ShapeBlock({
         zIndex: 1,
       }}
       data-shape-id={shape.id}
-      data-shape-type={shape.type}
+      data-shape-type={shape.appearance}
       onMouseDown={handleMouseDown}
     />
   )

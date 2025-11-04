@@ -4,7 +4,9 @@
   border-radius: 8px;
   padding: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  cursor: text;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   word-wrap: break-word;
   transition: box-shadow 0.2s ease;
@@ -22,15 +24,17 @@
 .text-block-editing {
   border: 2px solid #0066ff;
   box-shadow: 0 0 0 2px rgba(0, 102, 255, 0.3);
+  cursor: text;
 }
 
 .text-block-content {
   width: 100%;
-  height: 100%;
+  flex: 1;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   font-size: 14px;
   line-height: 1.6;
   color: #333;
+  overflow-y: auto;
 }
 
 .text-block-content h1 {
@@ -107,8 +111,7 @@
 
 .text-block-editor {
   width: 100%;
-  height: 100%;
-  min-height: 100px;
+  min-height: 120px;
   border: none;
   outline: none;
   resize: none;
@@ -118,9 +121,23 @@
   margin: 0;
   color: #333;
   line-height: 1.6;
+  box-sizing: border-box;
 }
 
 .text-block-editor::placeholder {
   color: #999;
+}
+
+.text-block-placeholder {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #888;
+  font-size: 14px;
+  font-style: italic;
+  padding: 8px;
+  background: linear-gradient(135deg, rgba(0, 102, 255, 0.06), rgba(0, 102, 255, 0));
 }
 

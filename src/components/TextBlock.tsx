@@ -8,10 +8,12 @@ interface TextBlockProps {
   isSelected: boolean
   isEditing: boolean
   onDoubleClick: () => void
-  onContentChange: (content: string) => void
+  onContentChange: (content: string, dimensions?: { width: number; height: number }) => void
   onBlur: () => void
   onMouseDown?: (e: React.MouseEvent, shapeId: string) => void
 }
+
+const VERTICAL_PADDING = 24 // padding total (12px haut + 12px bas)
 
 export default function TextBlock({
   shape,
@@ -22,55 +24,90 @@ export default function TextBlock({
   onBlur,
   onMouseDown
 }: TextBlockProps) {
-  const [editContent, setEditContent] = useState(shape.content || '')
+  const [editContent, setEditContent] = useState(shape.content ?? '')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const [editingSize, setEditingSize] = useState<{ width: number; height: number } | null>(null)
 
   useEffect(() => {
-    setEditContent(shape.content || '')
+    setEditContent(shape.content ?? '')
   }, [shape.content])
 
   useEffect(() => {
     if (isEditingProp && textareaRef.current) {
-      textareaRef.current.focus()
-      // Placer le curseur à la fin du texte
-      const length = textareaRef.current.value.length
-      textareaRef.current.setSelectionRange(length, length)
+      const textarea = textareaRef.current
+      textarea.focus()
+      const length = textarea.value.length
+      textarea.setSelectionRange(length, length)
     }
   }, [isEditingProp])
 
+  useEffect(() => {
+    if (!isEditingProp || !textareaRef.current) {
+      setEditingSize(null)
+      return
+    }
+
+    const textarea = textareaRef.current
+    textarea.style.height = 'auto'
+    const measuredHeight = textarea.scrollHeight + VERTICAL_PADDING
+    textarea.style.height = `${textarea.scrollHeight}px`
+    setEditingSize({ width: shape.width, height: measuredHeight })
+  }, [editContent, isEditingProp, shape.width])
+
   const handleDoubleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
-    setEditContent(shape.content || '')
+    setEditContent(shape.content ?? '')
     onDoubleClick()
   }
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!isEditingProp) {
-      e.stopPropagation() // Empêcher le pan du canvas
+      e.stopPropagation()
       if (onMouseDown) {
         onMouseDown(e, shape.id)
       }
     }
   }
 
+  const measureContentDimensions = (): { width: number; height: number } => {
+    if (textareaRef.current) {
+      const textarea = textareaRef.current
+      textarea.style.height = 'auto'
+      const height = textarea.scrollHeight + VERTICAL_PADDING
+      textarea.style.height = `${textarea.scrollHeight}px`
+      return { width: shape.width, height }
+    }
+
+    if (contentRef.current) {
+      const height = contentRef.current.scrollHeight + VERTICAL_PADDING
+      return { width: shape.width, height }
+    }
+
+    return { width: shape.width, height: shape.height }
+  }
+
   const handleBlur = () => {
-    onContentChange(editContent)
+    const dimensions = measureContentDimensions()
+    onContentChange(editContent, dimensions)
     onBlur()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Ctrl/Cmd + Enter pour sauvegarder
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       handleBlur()
     }
-    // Échapper pour annuler
     if (e.key === 'Escape') {
-      setEditContent(shape.content || '')
+      setEditContent(shape.content ?? '')
       onBlur()
     }
   }
 
-  // Position en coordonnées monde - la transformation sera appliquée par le parent
+  const hasContent = Boolean((shape.content ?? '').trim())
+  const resolvedWidth = Math.max(shape.width, editingSize?.width ?? shape.width)
+  const resolvedHeight = Math.max(shape.height, editingSize?.height ?? shape.height)
+  const editorMinHeight = Math.max(resolvedHeight - VERTICAL_PADDING, 80)
+
   return (
     <div
       className={`text-block ${isSelected ? 'text-block-selected' : ''} ${isEditingProp ? 'text-block-editing' : ''}`}
@@ -78,15 +115,16 @@ export default function TextBlock({
         position: 'absolute',
         left: 0,
         top: 0,
-        width: `${shape.width}px`,
-        minHeight: `${shape.height}px`,
+        width: `${resolvedWidth}px`,
+        height: `${resolvedHeight}px`,
         transform: `translate(${shape.x}px, ${shape.y}px)`,
         zIndex: 2,
+        cursor: isEditingProp ? 'text' : 'move',
       }}
       onDoubleClick={handleDoubleClick}
       onMouseDown={handleMouseDown}
       data-shape-id={shape.id}
-      data-shape-type="text"
+      data-shape-kind="text"
     >
       {isEditingProp ? (
         <textarea
@@ -99,14 +137,20 @@ export default function TextBlock({
           style={{
             fontSize: '14px',
             lineHeight: '1.6',
+            minHeight: `${editorMinHeight}px`,
           }}
         />
       ) : (
-        <div className="text-block-content">
-          <ReactMarkdown>{shape.content || ''}</ReactMarkdown>
-        </div>
+        hasContent ? (
+          <div ref={contentRef} className="text-block-content">
+            <ReactMarkdown>{shape.content ?? ''}</ReactMarkdown>
+          </div>
+        ) : (
+          <div ref={contentRef} className="text-block-placeholder">
+            Double-cliquez pour éditer ce bloc
+          </div>
+        )
       )}
     </div>
   )
 }
-

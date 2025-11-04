@@ -12,15 +12,95 @@ import {
 import type { CanvasViewState } from './services/storage'
 import './App.css'
 
+export type ShapeAppearance = 'square' | 'circle' | 'triangle' | 'text'
+export type ShapeKind = 'node' | 'text'
+
 export interface Shape {
   id: string
-  type: 'square' | 'circle' | 'triangle' | 'text'
+  kind: ShapeKind
+  appearance: ShapeAppearance
   x: number
   y: number
   width: number
   height: number
   color: string
   content?: string // Pour les blocs de texte (markdown)
+}
+
+type LegacyShape = {
+  id: string
+  type: 'square' | 'circle' | 'triangle' | 'text'
+  x: number
+  y: number
+  width?: number
+  height?: number
+  color?: string
+  content?: string
+}
+
+const DEFAULT_NODE_SIZE = 160
+const DEFAULT_TEXT_WIDTH = 320
+const DEFAULT_TEXT_HEIGHT = 180
+const DEFAULT_NODE_COLOR = '#4b6fff'
+
+const normalizeShape = (shape: Shape | LegacyShape): Shape | null => {
+  if (!shape || typeof shape !== 'object') {
+    return null
+  }
+
+  if ('kind' in shape && 'appearance' in shape) {
+    const normalizedAppearance: ShapeAppearance = shape.kind === 'text' ? 'text' : shape.appearance
+    const baseWidth = shape.kind === 'text' ? Math.max(shape.width, DEFAULT_TEXT_WIDTH) : Math.max(shape.width, DEFAULT_NODE_SIZE)
+    const baseHeight = shape.kind === 'text'
+      ? Math.max(shape.height, DEFAULT_TEXT_HEIGHT)
+      : Math.max(shape.height, DEFAULT_NODE_SIZE)
+
+    return {
+      ...shape,
+      appearance: normalizedAppearance,
+      width: baseWidth,
+      height: baseHeight,
+      content: shape.kind === 'text' ? shape.content ?? '' : undefined
+    }
+  }
+
+  const legacy = shape as LegacyShape
+
+  if (!legacy.id || !legacy.type) {
+    return null
+  }
+
+  const width = legacy.type === 'text'
+    ? Math.max(legacy.width ?? DEFAULT_TEXT_WIDTH, DEFAULT_TEXT_WIDTH)
+    : Math.max(legacy.width ?? DEFAULT_NODE_SIZE, DEFAULT_NODE_SIZE)
+  const height = legacy.type === 'text'
+    ? Math.max(legacy.height ?? DEFAULT_TEXT_HEIGHT, DEFAULT_TEXT_HEIGHT)
+    : Math.max(legacy.height ?? DEFAULT_NODE_SIZE, DEFAULT_NODE_SIZE)
+
+  if (legacy.type === 'text') {
+    return {
+      id: legacy.id,
+      kind: 'text',
+      appearance: 'text',
+      x: legacy.x,
+      y: legacy.y,
+      width,
+      height,
+      color: legacy.color ?? '#ffffff',
+      content: legacy.content ?? ''
+    }
+  }
+
+  return {
+    id: legacy.id,
+    kind: 'node',
+    appearance: legacy.type,
+    x: legacy.x,
+    y: legacy.y,
+    width,
+    height,
+    color: legacy.color ?? DEFAULT_NODE_COLOR
+  }
 }
 
 function App() {
@@ -80,14 +160,20 @@ function App() {
   // Fonction pour charger une toile
   const loadCanvas = useCallback((canvas: CanvasData) => {
     isInitialLoadRef.current = true
-    setCurrentCanvas(canvas)
-    
-    // Restaurer les formes
-    if (canvas.elements.shapes && Array.isArray(canvas.elements.shapes)) {
-      setShapes(canvas.elements.shapes as Shape[])
-    } else {
-      setShapes([])
-    }
+    const shapesArray = Array.isArray(canvas.elements.shapes) ? canvas.elements.shapes : []
+    const normalizedShapes = shapesArray
+      .map((shape) => normalizeShape(shape))
+      .filter((shape): shape is Shape => shape !== null)
+
+    setCurrentCanvas({
+      ...canvas,
+      elements: {
+        ...canvas.elements,
+        shapes: normalizedShapes,
+      }
+    })
+
+    setShapes(normalizedShapes)
 
     // Restaurer le type de fond
     setBackgroundType(canvas.backgroundType || 'grid')
@@ -180,11 +266,11 @@ function App() {
     }
   }, [showShapeMenu, contextMenuPos, showBackgroundMenu])
 
-  const addShape = (type: 'square' | 'circle' | 'triangle' | 'text', x?: number, y?: number) => {
+  const addShape = (appearance: ShapeAppearance, x?: number, y?: number) => {
     // Si aucune position spécifiée, placer l'objet au centre visible (qui correspond à 0,0)
     let shapeX = x
     let shapeY = y
-    
+
     if (shapeX === undefined || shapeY === undefined) {
       const centerCoords = canvasRef.current?.getCenterWorldCoords()
       if (centerCoords) {
@@ -198,17 +284,30 @@ function App() {
       }
     }
     
-    const newShape: Shape = {
-      id: Date.now().toString(),
-      type,
-      x: shapeX,
-      y: shapeY,
-      width: type === 'text' ? 300 : 100,
-      height: type === 'text' ? 150 : 100,
-      color: type === 'text' ? '#ffffff' : `hsl(${Math.random() * 360}, 70%, 50%)`,
-      content: type === 'text' ? '# Titre\n\nÉcrivez votre texte ici avec du **markdown**.' : undefined,
-    }
-    setShapes([...shapes, newShape])
+    const isText = appearance === 'text'
+    const newShape: Shape = isText
+      ? {
+          id: Date.now().toString(),
+          kind: 'text',
+          appearance: 'text',
+          x: shapeX,
+          y: shapeY,
+          width: DEFAULT_TEXT_WIDTH,
+          height: DEFAULT_TEXT_HEIGHT,
+          color: '#ffffff',
+          content: ''
+        }
+      : {
+          id: Date.now().toString(),
+          kind: 'node',
+          appearance,
+          x: shapeX,
+          y: shapeY,
+          width: DEFAULT_NODE_SIZE,
+          height: DEFAULT_NODE_SIZE,
+          color: `hsl(${Math.random() * 360}, 70%, 50%)`
+        }
+    setShapes((prevShapes) => [...prevShapes, newShape])
     setShowShapeMenu(false)
     setContextMenuPos(null)
   }
@@ -228,11 +327,28 @@ function App() {
     // La sauvegarde sera déclenchée automatiquement par le useEffect
   }
 
-  const handleTextContentChange = useCallback((shapeId: string, content: string) => {
+  const handleTextContentChange = useCallback((shapeId: string, content: string, dimensions?: { width: number; height: number }) => {
     setShapes((prevShapes) =>
-      prevShapes.map((shape) =>
-        shape.id === shapeId ? { ...shape, content } : shape
-      )
+      prevShapes.map((shape) => {
+        if (shape.id !== shapeId) {
+          return shape
+        }
+
+        const nextShape: Shape = {
+          ...shape,
+          content,
+        }
+
+        if (shape.kind === 'text') {
+          const minWidth = DEFAULT_TEXT_WIDTH
+          const minHeight = DEFAULT_TEXT_HEIGHT
+
+          nextShape.width = Math.max(dimensions?.width ?? shape.width, minWidth)
+          nextShape.height = Math.max(dimensions?.height ?? shape.height, minHeight)
+        }
+
+        return nextShape
+      })
     )
   }, [])
 
@@ -318,22 +434,42 @@ function App() {
     
     // Mettre à jour avec les données importées
     const importedShapes = importedData.shapes || importedData.elements?.shapes || []
+    const normalizedImportedShapes = (Array.isArray(importedShapes) ? importedShapes : [])
+      .map((shape) => normalizeShape(shape))
+      .filter((shape): shape is Shape => shape !== null)
     const importedViewState = importedData.viewState || { x: 0, y: 0, zoom: 1 }
     const importedBackgroundType = importedData.backgroundType || 'grid'
-    
+
     updateCanvas(newCanvas.id, {
       viewState: importedViewState,
       backgroundType: importedBackgroundType,
-      shapes: importedShapes
+      shapes: normalizedImportedShapes
     })
 
     // Récupérer la toile mise à jour depuis le storage et la charger
     const updatedCanvas = getCanvasById(newCanvas.id)
     if (updatedCanvas) {
-      loadCanvas(updatedCanvas)
       handleCanvasSelect(updatedCanvas)
+    } else {
+      loadCanvas({
+        ...newCanvas,
+        viewState: importedViewState,
+        backgroundType: importedBackgroundType,
+        elements: {
+          ...newCanvas.elements,
+          shapes: normalizedImportedShapes
+        }
+      })
     }
   }, [loadCanvas, handleCanvasSelect])
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+      }
+    }
+  }, [])
 
   return (
     <div className="app">
