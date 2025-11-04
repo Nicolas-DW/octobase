@@ -14,7 +14,7 @@ interface CanvasProps {
   onShapeMove?: (shapeId: string, newX: number, newY: number) => void
   onShapesMove?: (shapeIds: string[], deltaX: number, deltaY: number) => void
   onViewStateChange?: (viewState: ViewState) => void
-  onTextContentChange?: (shapeId: string, content: string) => void
+  onTextContentChange?: (shapeId: string, content: string, dimensions?: { width: number; height: number }) => void
   backgroundType?: BackgroundType
 }
 
@@ -61,131 +61,31 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
 
   // Fonction pour détecter si un point est dans une forme
   const isPointInShape = (worldX: number, worldY: number, shape: Shape): boolean => {
-    if (shape.type === 'text') {
-      return (
-        worldX >= shape.x &&
-        worldX <= shape.x + shape.width &&
-        worldY >= shape.y &&
-        worldY <= shape.y + shape.height
-      )
-    } else if (shape.type === 'square') {
-      return (
-        worldX >= shape.x &&
-        worldX <= shape.x + shape.width &&
-        worldY >= shape.y &&
-        worldY <= shape.y + shape.height
-      )
-    } else if (shape.type === 'circle') {
-      const centerX = shape.x + shape.width / 2
-      const centerY = shape.y + shape.height / 2
-      const radius = Math.min(shape.width, shape.height) / 2
-      const distance = Math.sqrt(
-        Math.pow(worldX - centerX, 2) + Math.pow(worldY - centerY, 2)
-      )
-      return distance <= radius
-    } else if (shape.type === 'triangle') {
-      // Vérifier si le point est dans le triangle
-      const x1 = shape.x + shape.width / 2
-      const y1 = shape.y
-      const x2 = shape.x
-      const y2 = shape.y + shape.height
-      const x3 = shape.x + shape.width
-      const y3 = shape.y + shape.height
+    const left = shape.x
+    const right = shape.x + shape.width
+    const top = shape.y
+    const bottom = shape.y + shape.height
 
-      // Utiliser la méthode des coordonnées barycentriques
-      const v0x = x3 - x1
-      const v0y = y3 - y1
-      const v1x = x2 - x1
-      const v1y = y2 - y1
-      const v2x = worldX - x1
-      const v2y = worldY - y1
-
-      const dot00 = v0x * v0x + v0y * v0y
-      const dot01 = v0x * v1x + v0y * v1y
-      const dot02 = v0x * v2x + v0y * v2y
-      const dot11 = v1x * v1x + v1y * v1y
-      const dot12 = v1x * v2x + v1y * v2y
-
-      const invDenom = 1 / (dot00 * dot11 - dot01 * dot01)
-      const u = (dot11 * dot02 - dot01 * dot12) * invDenom
-      const v = (dot00 * dot12 - dot01 * dot02) * invDenom
-
-      return u >= 0 && v >= 0 && u + v <= 1
-    }
-    return false
+    return worldX >= left && worldX <= right && worldY >= top && worldY <= bottom
   }
 
-  // Fonction pour détecter si une forme intersecte avec un rectangle de sélection
   const isShapeIntersectingRect = (shape: Shape, rect: { startX: number; startY: number; endX: number; endY: number }): boolean => {
     const rectLeft = Math.min(rect.startX, rect.endX)
     const rectRight = Math.max(rect.startX, rect.endX)
     const rectTop = Math.min(rect.startY, rect.endY)
     const rectBottom = Math.max(rect.startY, rect.endY)
 
-    if (shape.type === 'text' || shape.type === 'square') {
-      // Vérifier l'intersection rectangle-rectangle
-      return !(
-        shape.x + shape.width < rectLeft ||
-        shape.x > rectRight ||
-        shape.y + shape.height < rectTop ||
-        shape.y > rectBottom
-      )
-    } else if (shape.type === 'circle') {
-      // Vérifier l'intersection cercle-rectangle
-      const centerX = shape.x + shape.width / 2
-      const centerY = shape.y + shape.height / 2
-      const radius = Math.min(shape.width, shape.height) / 2
+    const shapeLeft = shape.x
+    const shapeRight = shape.x + shape.width
+    const shapeTop = shape.y
+    const shapeBottom = shape.y + shape.height
 
-      // Trouver le point du rectangle le plus proche du centre du cercle
-      const closestX = Math.max(rectLeft, Math.min(centerX, rectRight))
-      const closestY = Math.max(rectTop, Math.min(centerY, rectBottom))
-
-      // Calculer la distance entre le centre et ce point
-      const distanceX = centerX - closestX
-      const distanceY = centerY - closestY
-      const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY)
-
-      // Vérifier si le cercle intersecte le rectangle
-      return distance <= radius
-    } else if (shape.type === 'triangle') {
-      // Pour le triangle, vérifier si au moins un sommet est dans le rectangle
-      // ou si le rectangle intersecte avec les bords du triangle
-      const x1 = shape.x + shape.width / 2
-      const y1 = shape.y
-      const x2 = shape.x
-      const y2 = shape.y + shape.height
-      const x3 = shape.x + shape.width
-      const y3 = shape.y + shape.height
-
-      // Vérifier si un sommet est dans le rectangle
-      const pointInRect = (px: number, py: number) => 
-        px >= rectLeft && px <= rectRight && py >= rectTop && py <= rectBottom
-
-      if (pointInRect(x1, y1) || pointInRect(x2, y2) || pointInRect(x3, y3)) {
-        return true
-      }
-
-      // Vérifier si le centre du rectangle est dans le triangle
-      const rectCenterX = (rectLeft + rectRight) / 2
-      const rectCenterY = (rectTop + rectBottom) / 2
-      if (isPointInShape(rectCenterX, rectCenterY, shape)) {
-        return true
-      }
-
-      // Vérifier l'intersection avec les bords (approximation simple)
-      const shapeLeft = Math.min(x1, x2, x3)
-      const shapeRight = Math.max(x1, x2, x3)
-      const shapeTop = Math.min(y1, y2, y3)
-      const shapeBottom = Math.max(y1, y2, y3)
-
-      return !(
-        shapeRight < rectLeft ||
-        shapeLeft > rectRight ||
-        shapeBottom < rectTop ||
-        shapeTop > rectBottom
-      )
-    }
-    return false
+    return !(
+      shapeRight < rectLeft ||
+      shapeLeft > rectRight ||
+      shapeBottom < rectTop ||
+      shapeTop > rectBottom
+    )
   }
 
   // Fonction pour centrer la vue sur l'origine (0,0)
@@ -237,18 +137,10 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
     let maxY = -Infinity
 
     shapes.forEach((shape) => {
-      if (shape.type === 'square' || shape.type === 'triangle' || shape.type === 'text') {
-        minX = Math.min(minX, shape.x)
-        minY = Math.min(minY, shape.y)
-        maxX = Math.max(maxX, shape.x + shape.width)
-        maxY = Math.max(maxY, shape.y + shape.height)
-      } else if (shape.type === 'circle') {
-        const radius = Math.min(shape.width, shape.height) / 2
-        minX = Math.min(minX, shape.x + shape.width / 2 - radius)
-        minY = Math.min(minY, shape.y + shape.height / 2 - radius)
-        maxX = Math.max(maxX, shape.x + shape.width / 2 + radius)
-        maxY = Math.max(maxY, shape.y + shape.height / 2 + radius)
-      }
+      minX = Math.min(minX, shape.x)
+      minY = Math.min(minY, shape.y)
+      maxX = Math.max(maxX, shape.x + shape.width)
+      maxY = Math.max(maxY, shape.y + shape.height)
     })
 
     // Ajouter un padding autour des formes
@@ -1045,7 +937,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
       >
         {/* Rendre toutes les formes géométriques */}
         {shapes
-          .filter(shape => shape.type !== 'text')
+          .filter(shape => shape.kind !== 'text')
           .map((shape) => (
             <ShapeBlock
               key={shape.id}
@@ -1117,7 +1009,7 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           ))}
         {/* Rendre tous les blocs de texte */}
         {shapes
-          .filter(shape => shape.type === 'text')
+          .filter(shape => shape.kind === 'text')
           .map((shape) => (
             <TextBlock
               key={shape.id}
@@ -1125,9 +1017,9 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
               isSelected={selectedShapeIds.has(shape.id)}
               isEditing={editingTextId === shape.id}
               onDoubleClick={() => setEditingTextId(shape.id)}
-              onContentChange={(content) => {
+              onContentChange={(content, dimensions) => {
                 if (onTextContentChange) {
-                  onTextContentChange(shape.id, content)
+                  onTextContentChange(shape.id, content, dimensions)
                 }
               }}
               onBlur={() => setEditingTextId(null)}
