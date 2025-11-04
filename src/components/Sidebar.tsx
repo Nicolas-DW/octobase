@@ -17,9 +17,10 @@ interface SidebarProps {
   onExportCanvas?: () => void
   onImportCanvas?: (importedData: any) => void
   canExport?: boolean
+  isHidden?: boolean
 }
 
-export default function Sidebar({ onCanvasSelect, onToggle, onExportCanvas, onImportCanvas, canExport = false }: SidebarProps) {
+export default function Sidebar({ onCanvasSelect, onToggle, onExportCanvas, onImportCanvas, canExport = false, isHidden = false }: SidebarProps) {
   const [canvases, setCanvases] = useState<CanvasData[]>([])
   const [sortBy, setSortBy] = useState<SortOption>('createdAt')
   const [isCreating, setIsCreating] = useState(false)
@@ -115,7 +116,7 @@ export default function Sidebar({ onCanvasSelect, onToggle, onExportCanvas, onIm
   }
 
   return (
-    <div className="sidebar">
+    <div className={`sidebar ${isHidden ? 'sidebar-hidden' : ''}`}>
       {onToggle && (
         <button
           className="sidebar-tab"

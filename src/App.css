@@ -8,17 +8,10 @@
 
 .app-main {
   flex: 1;
-  margin-left: 280px;
   position: relative;
-  width: calc(100vw - 280px);
+  width: 100vw;
   height: 100vh;
   overflow: hidden;
-  transition: margin-left 0.3s ease, width 0.3s ease;
-}
-
-.app-main-full {
-  margin-left: 0;
-  width: 100vw;
 }
 
 .add-button-container {

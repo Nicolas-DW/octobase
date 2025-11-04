@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 're
 import type { Shape } from '../App'
 import TextBlock from './TextBlock'
 import ShapeBlock from './ShapeBlock'
-import { screenToWorld, clientToWorld, type ViewState as CoordinateViewState } from '../utils/coordinateUtils'
+import { screenToWorld, clientToWorld, worldToScreen, type ViewState as CoordinateViewState } from '../utils/coordinateUtils'
 import './Canvas.css'
 
 export type BackgroundType = 'grid' | 'radar' | 'dots' | 'diagonal' | 'graph' | 'isometric'
@@ -1194,22 +1194,47 @@ const Canvas = forwardRef<CanvasHandle, CanvasProps>(({ shapes, onContextMenu, o
           ))}
       </div>
       {/* Rectangle de sélection */}
-      {selectionRect && (
-        <div 
-          className="selection-rect"
-          style={{
-            position: 'fixed',
-            left: `${viewState.x + Math.min(selectionRect.startX, selectionRect.endX) * viewState.zoom}px`,
-            top: `${viewState.y + Math.min(selectionRect.startY, selectionRect.endY) * viewState.zoom}px`,
-            width: `${Math.abs(selectionRect.endX - selectionRect.startX) * viewState.zoom}px`,
-            height: `${Math.abs(selectionRect.endY - selectionRect.startY) * viewState.zoom}px`,
-            border: '1px dashed #0066ff',
-            backgroundColor: 'rgba(0, 102, 255, 0.1)',
-            pointerEvents: 'none',
-            zIndex: 1000,
-          }}
-        />
-      )}
+      {selectionRect && (() => {
+        // Obtenir la position réelle du canvas pour calculer correctement la position du rectangle
+        const canvas = canvasRef.current
+        const canvasRect = canvas ? canvas.getBoundingClientRect() : null
+        if (!canvasRect) return null
+        
+        // Convertir les coordonnées monde en coordonnées écran (relatives au canvas)
+        const startScreen = worldToScreen(
+          Math.min(selectionRect.startX, selectionRect.endX),
+          Math.min(selectionRect.startY, selectionRect.endY),
+          toCoordinateViewState(viewState)
+        )
+        const endScreen = worldToScreen(
+          Math.max(selectionRect.startX, selectionRect.endX),
+          Math.max(selectionRect.startY, selectionRect.endY),
+          toCoordinateViewState(viewState)
+        )
+        
+        // Convertir en coordonnées fixes (ajouter la position du canvas)
+        const left = canvasRect.left + startScreen.x
+        const top = canvasRect.top + startScreen.y
+        const width = endScreen.x - startScreen.x
+        const height = endScreen.y - startScreen.y
+        
+        return (
+          <div 
+            className="selection-rect"
+            style={{
+              position: 'fixed',
+              left: `${left}px`,
+              top: `${top}px`,
+              width: `${width}px`,
+              height: `${height}px`,
+              border: '1px dashed #0066ff',
+              backgroundColor: 'rgba(0, 102, 255, 0.1)',
+              pointerEvents: 'none',
+              zIndex: 1000,
+            }}
+          />
+        )
+      })()}
     </div>
   )
 })

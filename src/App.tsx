@@ -337,16 +337,15 @@ function App() {
 
   return (
     <div className="app">
-      {sidebarVisible && (
-        <Sidebar 
-          onCanvasSelect={handleCanvasSelect} 
-          onToggle={() => setSidebarVisible(false)}
-          onExportCanvas={handleExportCanvas}
-          onImportCanvas={handleImportCanvas}
-          canExport={currentCanvas !== null}
-        />
-      )}
-      <div className={`app-main ${sidebarVisible ? '' : 'app-main-full'}`}>
+      <Sidebar 
+        onCanvasSelect={handleCanvasSelect} 
+        onToggle={() => setSidebarVisible(false)}
+        onExportCanvas={handleExportCanvas}
+        onImportCanvas={handleImportCanvas}
+        canExport={currentCanvas !== null}
+        isHidden={!sidebarVisible}
+      />
+      <div className="app-main">
         <Canvas 
           ref={canvasRef} 
           shapes={shapes} 
