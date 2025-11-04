@@ -208,7 +208,7 @@ function App() {
       color: type === 'text' ? '#ffffff' : `hsl(${Math.random() * 360}, 70%, 50%)`,
       content: type === 'text' ? '# Titre\n\nÉcrivez votre texte ici avec du **markdown**.' : undefined,
     }
-    setShapes([...shapes, newShape])
+    setShapes((prevShapes) => [...prevShapes, newShape])
     setShowShapeMenu(false)
     setContextMenuPos(null)
   }
@@ -330,10 +330,27 @@ function App() {
     // Récupérer la toile mise à jour depuis le storage et la charger
     const updatedCanvas = getCanvasById(newCanvas.id)
     if (updatedCanvas) {
-      loadCanvas(updatedCanvas)
       handleCanvasSelect(updatedCanvas)
+    } else {
+      loadCanvas({
+        ...newCanvas,
+        viewState: importedViewState,
+        backgroundType: importedBackgroundType,
+        elements: {
+          ...newCanvas.elements,
+          shapes: importedShapes
+        }
+      })
     }
   }, [loadCanvas, handleCanvasSelect])
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current)
+      }
+    }
+  }, [])
 
   return (
     <div className="app">
